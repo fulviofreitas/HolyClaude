@@ -76,6 +76,8 @@ The `--break-system-packages` flag is required (no venv in container context).
 | **OpenAI Codex** | `codex` | Requires `OPENAI_API_KEY` env var |
 | **Cursor** | `cursor` | Requires `CURSOR_API_KEY` env var |
 | **TaskMaster AI** | `task-master` | Task planning and management |
+| **Junie** | `junie` | JetBrains AI coding agent (requires JetBrains account) |
+| **OpenCode** | `opencode` | Open source AI agent (supports multiple providers) |
 
 ## System Tools
 

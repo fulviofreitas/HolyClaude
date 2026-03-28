@@ -79,13 +79,19 @@ Notifications also require the flag file `~/.claude/notify-on` to exist inside t
 
 ### AI Provider API Keys
 
-These can also be set through the CloudCLI web UI.
+Claude Code can authenticate via web UI (OAuth) or `ANTHROPIC_API_KEY`. Other AI CLI keys can also be set through the web UI.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | (unset) | Anthropic API key (alternative to web UI OAuth) |
+| `ANTHROPIC_AUTH_TOKEN` | (unset) | Anthropic auth token (alternative to API key) |
+| `ANTHROPIC_BASE_URL` | (unset) | Custom Anthropic API endpoint (proxies, private deployments) |
+| `CLAUDE_CODE_USE_BEDROCK` | (unset) | Set to `1` to use Amazon Bedrock backend |
+| `CLAUDE_CODE_USE_VERTEX` | (unset) | Set to `1` to use Google Vertex AI backend |
 | `GEMINI_API_KEY` | (unset) | Google Gemini API key |
 | `OPENAI_API_KEY` | (unset) | OpenAI API key |
 | `CURSOR_API_KEY` | (unset) | Cursor API key |
+| `OLLAMA_HOST` | (unset) | Ollama endpoint URL |
 
 ---
 

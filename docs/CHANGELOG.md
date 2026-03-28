@@ -4,6 +4,21 @@ All notable changes to HolyClaude will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.3] - 03/27/2026
+
+### Added
+- Junie CLI (JetBrains AI coding agent) in full variant
+- OpenCode CLI (open source AI coding agent) in full variant
+- Environment variable passthrough to CloudCLI for AI provider keys, timezone, and display (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `OLLAMA_HOST`, `TZ`, `DISPLAY`, etc.)
+
+### Fixed
+- Web Terminal plugin stuck on "Connecting..." spinner (WebSocket frame type not preserved in plugin proxy, both relay directions patched)
+- `NODE_OPTIONS` from Docker Compose now correctly merged with internal flags instead of being silently overridden
+- `TZ` and `DISPLAY` environment variables now properly forwarded to CloudCLI process
+- Default permission mode corrected from `allowEdits` to `acceptEdits` in settings.json
+
+Thanks to [@RobertWalther](https://github.com/RobertWalther) for the WebSocket fix and [@kewogc](https://github.com/kewogc) for reporting the settings error.
+
 ## [1.1.2] - 03/26/2026
 
 ### Added

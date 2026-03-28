@@ -20,7 +20,7 @@
 
 ### Stop configuring. Start building.
 
-One command. Full AI development workstation. Claude Code, web UI, headless browser, 5 AI CLIs, 50+ dev tools — containerized and ready.
+One command. Full AI development workstation. Claude Code, web UI, headless browser, 7 AI CLIs, 50+ dev tools — containerized and ready.
 
 **You were going to spend 2 hours setting this up manually. Or you could just `docker compose up`.**
 
@@ -156,7 +156,7 @@ So I made a container that does all of it. And then I hit every possible bug so 
 | **Claude Code** | Pre-installed, pre-configured, ready | Install, configure, debug installer hanging, fix WORKDIR |
 | **Web UI** | CloudCLI included with plugins | Find a web UI, install it, configure it, wire it to Claude |
 | **Headless browser** | Chromium + Xvfb + Playwright, configured | Install Chromium, install Xvfb, configure display :99, fix shm, fix sandbox, fix seccomp... |
-| **AI CLIs** | 5 providers, one container | Install each one separately across 3 package managers |
+| **AI CLIs** | 7 providers, one container | Install each one separately across 3 package managers |
 | **Dev tools** | 50+ tools, ready | `apt-get install` / `npm i -g` / `pip install` for the next hour |
 | **Process management** | s6-overlay (auto-restart, graceful shutdown) | Write your own supervisord config or hope Docker restart works |
 | **Persistence** | Bind mounts, credentials survive everything | Figure out Docker volumes, debug "why is this a directory not a file" |
@@ -197,6 +197,8 @@ HolyClaude runs the **official Claude Code CLI** from Anthropic. Your existing a
 | OpenAI Codex | OpenAI API key (`OPENAI_API_KEY`) — separate from ChatGPT subscription |
 | Cursor | Cursor API key (`CURSOR_API_KEY`) |
 | TaskMaster AI | Uses your AI provider keys (Anthropic, OpenAI, etc.) |
+| Junie | JetBrains account (JetBrains AI subscription) |
+| OpenCode | Configure via `opencode` TUI (supports multiple providers) |
 
 > **HolyClaude is free and open source.** You only pay your AI providers for usage, same as you already do. We don't proxy, intercept, or touch your credentials. They live in your local bind mount.
 
@@ -390,10 +392,9 @@ services:
       # - NOTIFY_GOTIFY=gotify://hostname/token
       # - NOTIFY_URLS=                                   # catch-all: comma-separated Apprise URLs
       #
-      # AI PROVIDER API KEYS (optional)
-      # These are for the OTHER AI CLIs — not Claude Code itself.
-      # Claude Code authenticates through the web UI (OAuth or API key).
-      # Set these if you want to use Gemini, Codex, or Cursor CLIs.
+      # AI PROVIDER KEYS (optional)
+      # Claude Code can authenticate via web UI (OAuth) or ANTHROPIC_API_KEY.
+      # Set these if you want to use additional AI CLIs or API-based auth.
       #
       # - GEMINI_API_KEY=your_key
       # - OPENAI_API_KEY=your_key
@@ -425,7 +426,7 @@ These values are read by Docker Compose on the host. They are not container envi
 | **User mapping** | File permissions between container and host | If you get "permission denied" (`id -u` and `id -g` on your host) |
 | **SMB/CIFS** | File watcher polling mode | Only if your volumes live on a NAS or network share |
 | **Notifications** | Push alerts via Apprise (Discord, Telegram, Slack, Email, 100+ services) | If you want to walk away and know when Claude is done |
-| **AI providers** | API keys for Gemini, Codex, Cursor | If you want to use AI CLIs other than Claude |
+| **AI providers** | API keys for Gemini, Codex, Cursor, Junie, OpenCode | If you want to use AI CLIs other than Claude |
 
 > **Every single environment variable is optional.** The container runs perfectly with just `TZ=UTC`. Everything else has sensible defaults or is handled through the web UI.
 
@@ -456,9 +457,15 @@ The complete reference. Every variable, what it defaults to, what it does.
 | `NOTIFY_EMAIL` | *(unset)* | Email (SMTP) URL for notifications |
 | `NOTIFY_GOTIFY` | *(unset)* | Gotify URL for notifications |
 | `NOTIFY_URLS` | *(unset)* | Catch-all — comma-separated [Apprise URLs](https://github.com/caronc/apprise/wiki) |
+| `ANTHROPIC_API_KEY` | *(unset)* | Anthropic API key (alternative to web UI OAuth) |
+| `ANTHROPIC_AUTH_TOKEN` | *(unset)* | Anthropic auth token (alternative to API key) |
+| `ANTHROPIC_BASE_URL` | *(unset)* | Custom Anthropic API endpoint (proxies, private deployments) |
+| `CLAUDE_CODE_USE_BEDROCK` | *(unset)* | Set to `1` to use Amazon Bedrock backend |
+| `CLAUDE_CODE_USE_VERTEX` | *(unset)* | Set to `1` to use Google Vertex AI backend |
 | `GEMINI_API_KEY` | *(unset)* | Google Gemini API key |
 | `OPENAI_API_KEY` | *(unset)* | OpenAI API key (for Codex CLI — NOT ChatGPT) |
 | `CURSOR_API_KEY` | *(unset)* | Cursor API key |
+| `OLLAMA_HOST` | *(unset)* | Ollama endpoint URL (e.g., `http://host.docker.internal:11434`) |
 
 <p align="right">
   <a href="#top">↑ back to top</a>
@@ -533,8 +540,10 @@ This is not a minimal container. This is an entire development workstation.
 | **OpenAI Codex** | `codex` | OpenAI's coding agent |
 | **Cursor** | `cursor` | Cursor's AI agent |
 | **TaskMaster AI** | `task-master` | Task planning and orchestration |
+| **Junie** | `junie` | JetBrains' AI coding agent |
+| **OpenCode** | `opencode` | Open source AI agent (multiple providers) |
 
-Five AI CLIs. One container. Switch between them instantly. No other Docker image does this.
+Seven AI CLIs. One container. Switch between them instantly. No other Docker image does this.
 
 </details>
 
@@ -595,7 +604,7 @@ The full image includes everything above, plus:
 
 ## :robot: AI CLI Providers
 
-Five AI CLIs. One container. No other Docker image gives you this.
+Seven AI CLIs. One container. No other Docker image gives you this.
 
 | Provider | Command | How to authenticate | Subscription works? |
 |----------|---------|--------------------|--------------------|
@@ -604,6 +613,8 @@ Five AI CLIs. One container. No other Docker image gives you this.
 | **OpenAI Codex** | `codex` | `OPENAI_API_KEY` env var | API key only — ChatGPT Plus does NOT work |
 | **Cursor** | `cursor` | `CURSOR_API_KEY` env var | API key |
 | **TaskMaster AI** | `task-master` | Uses existing AI provider keys | Works with configured keys |
+| **Junie** | `junie` | JetBrains AI subscription | JetBrains account required |
+| **OpenCode** | `opencode` | Configure via TUI | Supports multiple providers |
 
 > Claude Code is the primary CLI. The others are there because sometimes you want a second opinion, or a specific model's strengths, or you're comparing outputs. Having all of them one `Tab` away is the whole point.
 

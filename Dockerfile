@@ -146,9 +146,31 @@ USER claude
 RUN curl -fsSL https://cursor.com/install | bash
 USER root
 
+# ---------- Junie CLI (full only) ----------
+USER claude
+RUN if [ "$VARIANT" = "full" ]; then \
+    curl -fsSL https://junie.jetbrains.com/install.sh | bash; \
+    fi
+USER root
+
+# ---------- OpenCode CLI (full only) ----------
+RUN if [ "$VARIANT" = "full" ]; then \
+    npm i -g opencode-ai; \
+    fi
+
 # ---------- CloudCLI (web UI for Claude Code) ----------
 RUN npm i -g @siteboon/claude-code-ui
 RUN touch /usr/local/lib/node_modules/@siteboon/claude-code-ui/.env
+
+# ---------- Patch: preserve WebSocket frame type in plugin proxy (Issue #11) ----------
+RUN CLOUDCLI_INDEX="/usr/local/lib/node_modules/@siteboon/claude-code-ui/server/index.js" && \
+    grep -q "upstream.on('message', (data) =>" "$CLOUDCLI_INDEX" && \
+    sed -i "s/upstream.on('message', (data) => {/upstream.on('message', (data, isBinary) => {/" "$CLOUDCLI_INDEX" && \
+    sed -i "s/if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data)/if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data, { binary: isBinary })/" "$CLOUDCLI_INDEX" && \
+    sed -i "s/clientWs.on('message', (data) => {/clientWs.on('message', (data, isBinary) => {/" "$CLOUDCLI_INDEX" && \
+    sed -i "s/if (upstream.readyState === WebSocket.OPEN) upstream.send(data)/if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary })/" "$CLOUDCLI_INDEX" && \
+    echo "[patch] WebSocket frame type fix applied (both directions)" || \
+    echo "[patch] WARNING: WebSocket pattern not found in CloudCLI v$(npm show @siteboon/claude-code-ui version), skipping patch"
 
 # ---------- CloudCLI plugins (baked into image) ----------
 USER claude

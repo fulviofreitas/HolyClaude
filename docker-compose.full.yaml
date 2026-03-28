@@ -52,7 +52,15 @@ services:
       # - NOTIFY_GOTIFY=gotify://hostname/token
       # - NOTIFY_URLS=                                   # catch-all: comma-separated Apprise URLs
 
+      # --- Anthropic / Claude Code (optional, can also authenticate via web UI) ---
+      # - ANTHROPIC_API_KEY=
+      # - ANTHROPIC_AUTH_TOKEN=
+      # - ANTHROPIC_BASE_URL=                    # Custom API endpoint (proxies, private deployments)
+      # - CLAUDE_CODE_USE_BEDROCK=1              # Use Amazon Bedrock as backend
+      # - CLAUDE_CODE_USE_VERTEX=1               # Use Google Vertex AI as backend
+
       # --- AI provider API keys (optional — can also set via web UI) ---
       # - GEMINI_API_KEY=
       # - OPENAI_API_KEY=
       # - CURSOR_API_KEY=
+      # - OLLAMA_HOST=http://host.docker.internal:11434    # External Ollama endpoint

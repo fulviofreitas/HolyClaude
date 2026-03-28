@@ -96,5 +96,5 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: coderluii/holyclaude
-          short-description: "AI coding workstation: Claude Code + web UI + 5 AI CLIs + headless browser + 50+ tools"
+          short-description: "AI coding workstation: Claude Code + web UI + 7 AI CLIs + headless browser + 50+ tools"
           readme-filepath: ./docs/dockerhub-description.md
