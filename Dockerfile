@@ -69,6 +69,12 @@ RUN if [ "$VARIANT" = "full" ]; then \
     && rm -rf /var/lib/apt/lists/*; \
     fi
 
+# ---------- Azure CLI (full only) ----------
+RUN if [ "$VARIANT" = "full" ]; then \
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
+    && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # ---------- GitHub CLI ----------
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && \

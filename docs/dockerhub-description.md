@@ -46,7 +46,7 @@ That's it. Open your browser, sign in, start building.
 
 🖥️ **Headless Browser** — Chromium + Xvfb + Playwright, pre-configured for screenshots, testing, and automation
 
-🛠️ **50+ Dev Tools** — Node.js 22, Python 3, TypeScript, git, GitHub CLI, database clients (PostgreSQL, SQLite, Redis), deployment CLIs (Vercel, Wrangler, Netlify), and more
+🛠️ **50+ Dev Tools** — Node.js 22, Python 3, TypeScript, git, GitHub CLI, database clients (PostgreSQL, SQLite, Redis), deployment CLIs (Vercel, Wrangler, Netlify, Azure), and more
 
 ⚙️ **s6-overlay v3** — Proper PID 1 process supervision with graceful shutdown and automatic service restarts
 

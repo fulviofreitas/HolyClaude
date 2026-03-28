@@ -32,7 +32,7 @@ Both managed by s6-overlay — they auto-restart on failure.
 - **Code quality:** eslint, prettier
 - **Dev servers:** serve, nodemon, http-server
 - **Utilities:** concurrently, dotenv-cli
-- **Deployment:** wrangler (Cloudflare), vercel, netlify-cli, @cloudflare/next-on-pages
+- **Deployment:** wrangler (Cloudflare), vercel, netlify-cli, @cloudflare/next-on-pages, az (Azure)
 - **Databases:** prisma, drizzle-kit
 - **Process management:** pm2
 - **Mobile:** eas-cli (Expo)

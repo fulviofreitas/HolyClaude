@@ -4,6 +4,12 @@ All notable changes to HolyClaude will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.4] - 03/28/2026
+
+### Added
+- Azure CLI (`az`) in full variant
+- Ollama setup documentation (`docs/ollama.md`) for running HolyClaude with local or cloud models without an Anthropic subscription
+
 ## [1.1.3] - 03/27/2026
 
 ### Added

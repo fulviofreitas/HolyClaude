@@ -71,6 +71,7 @@ Your existing Anthropic account works directly:
 | :wrench: | [Environment Variables](#wrench-environment-variables) |
 | :rocket: | [What's Inside](#rocket-whats-inside) |
 | :robot: | [AI CLI Providers](#robot-ai-cli-providers) |
+| :llama: | [Using Ollama](#llama-using-ollama) |
 | :building_construction: | [Architecture](#building_construction-architecture) |
 | :file_folder: | [Project Structure](#file_folder-project-structure) |
 | :floppy_disk: | [Data & Persistence](#floppy_disk-data--persistence) |
@@ -559,6 +560,7 @@ The full image includes everything above, plus:
 | `wrangler`, `@cloudflare/next-on-pages` | Cloudflare Workers deployment |
 | `vercel` | Vercel deployment |
 | `netlify-cli` | Netlify deployment |
+| `az` | Azure CLI for cloud deployment and management |
 | `prisma`, `drizzle-kit` | The two most popular Node.js ORMs |
 | `pm2` | Production process manager |
 | `eas-cli` | Expo / React Native builds |
@@ -617,6 +619,18 @@ Seven AI CLIs. One container. No other Docker image gives you this.
 | **OpenCode** | `opencode` | Configure via TUI | Supports multiple providers |
 
 > Claude Code is the primary CLI. The others are there because sometimes you want a second opinion, or a specific model's strengths, or you're comparing outputs. Having all of them one `Tab` away is the whole point.
+
+<p align="right">
+  <a href="#top">↑ back to top</a>
+</p>
+
+---
+
+## :llama: Using Ollama
+
+HolyClaude works with [Ollama](https://ollama.com) as an alternative to an Anthropic subscription. Set two environment variables and use local or cloud models.
+
+See the full setup guide: **[docs/ollama.md](docs/ollama.md)**
 
 <p align="right">
   <a href="#top">↑ back to top</a>
@@ -691,6 +705,7 @@ holyclaude/
 │   ├── CHANGELOG.md
 │   ├── configuration.md
 │   ├── dockerhub-description.md
+│   ├── ollama.md
 │   └── troubleshooting.md
 ├── scripts/                 # Container lifecycle scripts
 │   ├── bootstrap.sh         # First-run setup
