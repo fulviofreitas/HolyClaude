@@ -4,6 +4,16 @@ All notable changes to HolyClaude will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 04/09/2026
+
+### Added
+- Remote access security guidance recommending Tailscale or Cloudflare Tunnel instead of exposing HolyClaude directly to the public internet
+- Optional CloudCLI account persistence documentation using a named Docker volume for local storage users
+
+### Fixed
+- Corrected persistence docs to reflect that Claude Code OAuth session (`~/.claude.json`) already survives container rebuilds
+- Synced translated READMEs and troubleshooting docs with the current persistence behavior
+
 ## [1.1.9] - 04/04/2026
 
 ### Fixed

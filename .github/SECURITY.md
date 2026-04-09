@@ -39,6 +39,17 @@ The container has unrestricted outbound network access. This is required for:
 - Git operations (clone, push, pull)
 - Any web requests Claude Code makes during development tasks
 
+## Exposing HolyClaude to the Internet
+
+**Do not port-forward HolyClaude to the public internet.** CloudCLI exposes a full shell and holds your AI provider credentials. A simple password is not sufficient protection — basic auth gets brute-forced, and one compromise means an attacker has arbitrary code execution, access to your workspace, and a paid Claude Code instance running on your credentials.
+
+If you need to reach HolyClaude from outside your local network, use:
+
+- **[Tailscale](https://tailscale.com)** — WireGuard mesh VPN, zero open ports, identity-based auth. Recommended for personal and small-team use.
+- **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)** — Outbound-only tunnel to Cloudflare's edge, optional Cloudflare Access SSO in front. Recommended when you need a public hostname or shared access.
+
+Both options are free for personal use, encrypt the connection end-to-end, and never require opening a port on your router. See the [Remote Access & Exposure](../README.md#shield-remote-access--exposure) section of the README for full details.
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in HolyClaude:

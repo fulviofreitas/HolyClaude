@@ -24,6 +24,8 @@ Solutions to common issues when running HolyClaude.
 
 **Fix:** Don't store SQLite databases on network mounts. HolyClaude keeps `.cloudcli` in container-local storage for this reason. If you're using your own SQLite databases in `/workspace` on a network mount, move them to a local path.
 
+> If you want the CloudCLI account to persist across rebuilds, use a **named Docker volume** for `/home/claude/.cloudcli` (see the README's Data & Persistence section). Named volumes live on the Docker engine's local filesystem, so SQLite file locking works. Never bind-mount `.cloudcli` to a NAS, SMB, or NFS path.
+
 ---
 
 ### Chromium crashes or blank pages
@@ -102,6 +104,16 @@ Never delete the entire `./data/claude/` directory — this wipes your credentia
 **Cause:** If the bind-mount target doesn't exist as a file before container start, Docker creates it as a directory.
 
 **Fix:** Already handled in `entrypoint.sh` — it pre-creates the file if missing. If you're running a custom setup, ensure `~/.claude.json` exists as a file before starting the container.
+
+---
+
+### Claude Code asks to re-login after rebuild
+
+**Symptom:** After `docker compose down && up`, Claude Code prompts for OAuth / API key again.
+
+**Cause:** Versions before v1.1.7 didn't persist `~/.claude.json`, which holds the Claude Code session state. Container recreation wiped it.
+
+**Fix:** Upgrade to v1.1.7 or later. The session is now auto-saved to `./data/claude/.claude.json.persist` on every boot and every 60 seconds, then restored on the next start. If you're on v1.1.7+ and still losing the session, check that `./data/claude/` is actually writable by the container user (PUID/PGID mismatch).
 
 ---
 

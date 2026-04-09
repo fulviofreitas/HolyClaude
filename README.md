@@ -78,6 +78,7 @@ Your existing Anthropic account works directly:
 | :file_folder: | [Project Structure](#file_folder-project-structure) |
 | :floppy_disk: | [Data & Persistence](#floppy_disk-data--persistence) |
 | :lock: | [Permissions](#lock-permissions) |
+| :shield: | [Remote Access & Exposure](#shield-remote-access--exposure) |
 | :bell: | [Notifications](#bell-notifications) |
 | :arrows_counterclockwise: | [Upgrading](#arrows_counterclockwise-upgrading) |
 | :construction: | [Troubleshooting](#construction-troubleshooting) |
@@ -124,6 +125,8 @@ http://localhost:3001
 **5.** Create a CloudCLI account (takes 10 seconds), sign in with your Anthropic account, and you're live.
 
 > No `.env` files. No pre-configuration. No reading 40 pages of docs before you can start. It just runs.
+
+> **Want to reach it from outside your network?** Don't port-forward it. See [Remote Access & Exposure](#shield-remote-access--exposure) — use Tailscale or Cloudflare Tunnel instead.
 
 <p align="right">
   <a href="#top">↑ back to top</a>
@@ -734,18 +737,19 @@ holyclaude/
 | What | Where (container) | Where (host) | Survives rebuild? |
 |------|-------------------|-------------|-------------------|
 | Settings, credentials, API keys | `/home/claude/.claude` | `./data/claude` | **Yes** |
+| Claude Code session (OAuth, onboarding) | `/home/claude/.claude.json` | `./data/claude/.claude.json.persist` | **Yes** |
 | Your code and projects | `/workspace` | `./workspace` | **Yes** |
-| CloudCLI account | `/home/claude/.cloudcli` | *(container only)* | No |
-| Onboarding state | `/home/claude/.claude.json` | *(container only)* | No |
+| CloudCLI account | `/home/claude/.cloudcli` | *(container only by default — see below)* | No (opt-in available) |
 
 ### What survives `docker compose down && docker compose up`:
 - Your Anthropic authentication and API keys
-- Claude Code settings and memory (`CLAUDE.md`)
+- Claude Code settings, memory (`CLAUDE.md`), and OAuth session (no re-login)
 - All your code in `./workspace`
 - Git configuration
+- Codex, Gemini, and Cursor CLI auth (since v1.1.7)
 
 ### What you'll redo (10 seconds):
-- CloudCLI web account — quick signup, that's it
+- CloudCLI web account — quick signup, that's it (unless you opt into persistence below)
 
 ### Re-triggering first-boot setup:
 ```bash
@@ -755,6 +759,28 @@ docker compose restart holyclaude
 ```
 
 > **Never delete `./data/claude/` entirely.** That's where your credentials live. Delete the sentinel file if you want a fresh bootstrap. Delete specific config files if you want to reset settings. But never nuke the whole folder.
+
+### Persisting the CloudCLI account (optional, local storage only)
+
+By default, the CloudCLI account database (`~/.cloudcli`) is container-local and gets wiped on rebuild. Re-creating the account takes 10 seconds, so most people leave it as-is.
+
+If you want it to survive rebuilds, add a **named Docker volume** to your compose file:
+
+```yaml
+services:
+  holyclaude:
+    volumes:
+      - ./data/claude:/home/claude/.claude
+      - ./workspace:/workspace
+      - cloudcli-data:/home/claude/.cloudcli   # add this line
+
+volumes:
+  cloudcli-data:                                # and this block
+```
+
+> **Do NOT bind-mount `./data/cloudcli` on a network share (NAS, SMB/CIFS, NFS).** CloudCLI stores its account in SQLite, and SQLite's file locking breaks on network mounts. You'll hit `database is locked` errors constantly. Named volumes live on the Docker engine's local filesystem, which is why this works — bind mounts pointing at a NAS will not.
+
+A bind mount to a local SSD path is fine too, just keep it off any network share.
 
 <p align="right">
   <a href="#top">↑ back to top</a>
@@ -786,6 +812,57 @@ This is how I personally run it. Edit `./data/claude/settings.json` on your host
 ```
 
 > **Bypass mode means Claude executes any command without confirmation.** Fast, powerful, and exactly what you want if you trust what you're building. But `allowEdits` is the safe default for a reason.
+
+<p align="right">
+  <a href="#top">↑ back to top</a>
+</p>
+
+---
+
+## :shield: Remote Access & Exposure
+
+HolyClaude binds CloudCLI to port `3001`. By default that's local-only — fine for running on your laptop or a home server you SSH into.
+
+**The moment you want to reach it from outside your network, read this section.**
+
+### Don't port-forward it to the public internet
+
+I'll say it flat out: do not punch a hole in your router and expose `3001` to the open internet. Not even with a password. Here's why:
+
+- CloudCLI exposes a full shell through the web terminal plugin
+- It can run arbitrary code, install packages, and read/write your entire `/workspace`
+- It holds your Anthropic OAuth tokens and API keys
+- Basic auth / app-level passwords get brute-forced, credential-stuffed, and scraped out of logs
+- One leaked password = someone else has a paid Claude Code instance running on your box with your money
+
+A password is a speed bump, not a door. Treat HolyClaude like you'd treat an SSH session: never on the open internet without a proper tunnel in front of it.
+
+### Use a proper tunnel instead
+
+These are the two options I actually recommend:
+
+| Option | Who it's for | Why |
+|--------|-------------|-----|
+| **[Tailscale](https://tailscale.com)** | Personal use, small teams | WireGuard mesh VPN. Install Tailscale on your server + your laptop/phone, and you reach `http://holyclaude:3001` from anywhere as if you were on the LAN. No ports opened, no DNS, no certs. Free for personal use. |
+| **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)** | Sharing with others, public hostname | Cloudflare proxies the connection, so port `3001` stays closed. You get a real domain with HTTPS, and you can put Cloudflare Access (Google/GitHub SSO) in front of it. Free tier covers most personal use. |
+
+Both give you:
+- Zero open ports on your router
+- Encrypted transport end to end
+- Real identity-based auth (not a shared password)
+- Audit logs
+
+### If you insist on exposing it directly (please don't)
+
+If you absolutely have to skip the tunnel (self-hosting tutorial, isolated lab network, whatever), at the very minimum:
+
+1. **Put a reverse proxy in front of it** (Caddy, nginx, Traefik) with real TLS
+2. **Add IP allowlisting** at the firewall or proxy level — only your known IPs
+3. **Enable `bypassPermissions: false`** (the default) so shell commands still prompt
+4. **Rotate your Anthropic credentials** if anything looks off
+5. **Run behind Cloudflare Access or similar SSO**, not basic auth
+
+Even with all that, the risk surface is huge. Use Tailscale or Cloudflare Tunnel. They're free, they take five minutes to set up, and they're what I personally use.
 
 <p align="right">
   <a href="#top">↑ back to top</a>
