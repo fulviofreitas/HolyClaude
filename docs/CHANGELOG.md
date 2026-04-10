@@ -4,6 +4,11 @@ All notable changes to HolyClaude will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 04/10/2026
+
+### Fixed
+- `/model <name>` in Chat tab now actually switches the active model — it persists to localStorage and survives page reload
+
 ## [1.2.1] - 04/10/2026
 
 ### Fixed
