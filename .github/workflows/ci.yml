@@ -111,7 +111,7 @@ jobs:
       - name: Smoke test
         run: ./scripts/ci/smoke-test.sh holyclaude:ci-${{ matrix.variant }}
 
-      - name: Trivy scan (HIGH,CRITICAL)
+      - name: Trivy scan (HIGH,CRITICAL vulns)
         if: always()
         uses: aquasecurity/trivy-action@master
         with:
@@ -121,6 +121,12 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          # Vulnerability scan only. Trivy's secret scanner produces noisy
+          # false positives on npm cache files (matches `github-pat` regex
+          # against minified package source). Misconfig/license scanners are
+          # not relevant for a runtime image scan.
+          scanners: vuln
+          skip-dirs: "/home/claude/.npm,/root/.npm,/tmp/vendor"
 
       - name: Upload Trivy SARIF
         if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
