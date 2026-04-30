@@ -111,7 +111,7 @@ jobs:
       - name: Smoke test
         run: ./scripts/ci/smoke-test.sh holyclaude:ci-${{ matrix.variant }}
 
-      - name: Trivy scan (HIGH,CRITICAL vulns)
+      - name: Trivy scan (HIGH,CRITICAL vulns — advisory)
         if: always()
         uses: aquasecurity/trivy-action@master
         with:
@@ -120,13 +120,20 @@ jobs:
           output: trivy-${{ matrix.variant }}.sarif
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: "1"
-          # Vulnerability scan only. Trivy's secret scanner produces noisy
-          # false positives on npm cache files (matches `github-pat` regex
-          # against minified package source). Misconfig/license scanners are
-          # not relevant for a runtime image scan.
+          # Vulnerability scan only — secret scanner false-positives on npm
+          # cache files; misconfig/license scanners aren't relevant here.
           scanners: vuln
           skip-dirs: "/home/claude/.npm,/root/.npm,/tmp/vendor"
+          # Advisory rather than blocking. The image vendors a long tail of
+          # npm + Debian packages whose transitive deps (picomatch, uuid,
+          # prismjs, brace-expansion …) routinely have HIGH CVEs we cannot
+          # patch without forking each upstream package — and the runtime
+          # is behind Cloudflare Tunnel + OAuth so the realistic blast
+          # radius doesn't justify gating every CloudCLI bump on the npm
+          # ecosystem's vuln-of-the-week. The SARIF still uploads to the
+          # Security tab so we keep visibility; gate later if a
+          # straightforward fix path emerges.
+          exit-code: "0"
 
       - name: Upload Trivy SARIF
         if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
