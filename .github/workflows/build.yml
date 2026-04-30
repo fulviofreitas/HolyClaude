@@ -158,11 +158,6 @@ jobs:
             io.holyclaude.variant=slim
 
   # ---------------------------------------------------------------------------
-  # NOTE: the downstream manifest-bump (PR into fulviofreitas/ff-k8s) is
-  # intentionally NOT chained here. The cluster image switchover from the
-  # upstream coderluii/holyclaude:1.2.2 to ghcr.io/fulviofreitas/holyclaude:*
-  # is owned by the GitOps repo and will be wired up there. The manifest-bump
-  # workflow remains in this repo, callable manually via workflow_dispatch
-  # (.github/workflows/manifest-bump.yml) for ad-hoc bumps after the
-  # switchover has happened.
+  # No downstream manifest-bump from here — image-tag tracking in
+  # fulviofreitas/ff-k8s is handled by Renovate in that repo.
   # ---------------------------------------------------------------------------

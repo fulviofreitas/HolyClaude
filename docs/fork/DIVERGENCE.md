@@ -30,7 +30,8 @@ Kubernetes cluster.
 > |---|---|---|
 > | `upstream-sync` | `CoderLuii/HolyClaude` master | git-level merge, not a dependency bump |
 > | `cloudcli-sync` | npm `@cloudcli-ai/cloudcli` (vendored as a tarball) | requires `npm pack` + binary commit + Dockerfile rewrite, which Renovate cannot do |
-> | `renovate` | github-actions `uses:` versions, node base image, `S6_OVERLAY_VERSION` ARG | standard Renovate scope; auto-merge minor/patch |
+> | `renovate` (this repo) | github-actions `uses:` versions, node base image, `S6_OVERLAY_VERSION` ARG | standard Renovate scope; auto-merge minor/patch |
+> | Renovate (in `ff-k8s`) | the GHCR image tag in the cluster manifest | owned downstream — this repo never touches the GitOps side |
 
 1. `holyclaude-upstream-sync` workflow runs daily. When `CoderLuii/HolyClaude`
    master advances, it opens a PR labeled `upstream-sync` into our `master`.
@@ -60,12 +61,10 @@ Kubernetes cluster.
    CLI/PDF/video tooling) are still in the Dockerfile but the build job
    does not exercise them.
 5. The cluster-side image switchover (from `coderluii/holyclaude:*` to
-   `ghcr.io/fulviofreitas/holyclaude:*`) is owned by the GitOps repo
-   `fulviofreitas/ff-k8s` and is wired up there. The
-   `.github/workflows/manifest-bump.yml` workflow in this repo remains
-   callable via `workflow_dispatch` once the GitOps side is ready; it is
-   no longer auto-triggered from `build.yml` so freshly-published images
-   never silently force a downstream PR.
+   `ghcr.io/fulviofreitas/holyclaude:*`) and ongoing image-tag tracking
+   are owned by the GitOps repo `fulviofreitas/ff-k8s`. Renovate runs
+   there and watches GHCR for new tags, so this repo never reaches into
+   the cluster's manifests directly.
 
 ## Patch rot
 

@@ -49,8 +49,8 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 >   `npm pack`s the new tarball into `vendor/artifacts/`, rewrites the
 >   Dockerfile reference, and opens a PR labeled `cloudcli-sync`. CI
 >   smoke-tests the built image end-to-end (including a runtime check that
->   the patched bundle still has the patched behavior). Merge → publish →
->   downstream PR in `fulviofreitas/ff-k8s` bumps the deployed image tag →
+>   the patched bundle still has the patched behavior). Merge → publish to
+>   GHCR. Renovate in `fulviofreitas/ff-k8s` then picks up the new tag and
 >   ArgoCD reconciles.
 > - **Update flow — HolyClaude-driven:** identical pipeline, but the
 >   trigger is a daily workflow that detects new commits/tags on
