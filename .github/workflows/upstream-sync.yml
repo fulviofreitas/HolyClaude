@@ -1,0 +1,31 @@
+# =============================================================================
+# upstream-sync (thin wrapper) — see workflow-arsenal/upstream-fork-sync.yml
+# =============================================================================
+# Daily sync from CoderLuii/HolyClaude. The reusable workflow handles the
+# remote add, compare, branch, merge, and PR open/update.
+
+name: upstream-sync
+
+on:
+  schedule:
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    uses: fulviofreitas/workflow-arsenal/.github/workflows/upstream-fork-sync.yml@master
+    with:
+      upstream-repo: CoderLuii/HolyClaude
+      upstream-branch: master
+      fork-base-branch: master
+      pr-labels: "upstream-sync,automated"
+      pr-assignees: fulviofreitas
+    secrets: inherit

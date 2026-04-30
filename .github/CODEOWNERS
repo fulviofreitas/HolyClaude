@@ -1,0 +1,9 @@
+# Default owner — every change requires Fulvio's review.
+*                       @fulviofreitas
+
+# Fork-specific paths — explicit so an upstream-sync PR that touches them
+# pings Fulvio first.
+/.github/                @fulviofreitas
+/docs/fork/              @fulviofreitas
+/scripts/ci/             @fulviofreitas
+/vendor/                 @fulviofreitas

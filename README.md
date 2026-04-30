@@ -30,6 +30,38 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 
 ---
 
+> ## :hammer_and_wrench: This is a fork
+>
+> This repository is **`fulviofreitas/HolyClaude`**, a personal fork of
+> [`CoderLuii/HolyClaude`](https://github.com/CoderLuii/HolyClaude). It
+> exists to keep the bundled CloudCLI (`siteboon/claudecodeui`) on a faster
+> cadence than upstream and to deploy the resulting image to a private
+> Kubernetes cluster.
+>
+> - **Image**: `ghcr.io/fulviofreitas/holyclaude:<semver>-fork.<n>` (full)
+>   and `…-slim` (slim). Tagged additionally with
+>   `cloudcli-<X.Y.Z>` so you can trace which UI version is in which image.
+> - **Update flow — CloudCLI-driven (primary):** a daily workflow polls
+>   `npm view @siteboon/claude-code-ui version`. When it advances, the bot
+>   `npm pack`s the new tarball into `vendor/artifacts/`, rewrites the
+>   Dockerfile reference, and opens a PR labeled `cloudcli-sync`. CI
+>   smoke-tests the built image end-to-end (including a runtime check that
+>   the patched bundle still has the patched behavior). Merge → publish →
+>   downstream PR in `fulviofreitas/ff-k8s` bumps the deployed image tag →
+>   ArgoCD reconciles.
+> - **Update flow — HolyClaude-driven:** identical pipeline, but the
+>   trigger is a daily workflow that detects new commits/tags on
+>   `CoderLuii/HolyClaude` and opens a PR labeled `upstream-sync`.
+> - **Rollback:** the cluster pins an immutable tag, not `latest`. To roll
+>   back, edit `kubernetes/apps/holyclaude/deployment.yaml` in
+>   `fulviofreitas/ff-k8s` and set `image:` to a previous tag from
+>   [GHCR](https://github.com/fulviofreitas/HolyClaude/pkgs/container/holyclaude).
+>   ArgoCD reconciles within minutes.
+> - **Divergence policy:** see [`docs/fork/DIVERGENCE.md`](docs/fork/DIVERGENCE.md)
+>   for the per-path ownership table and the patch-rot canary.
+
+---
+
 ## What is this?
 
 You know the drill. You want Claude Code. But you also want it in a browser. With a headless browser for screenshots and testing. With Playwright configured. With every AI CLI. With TypeScript, Python, deployment tools, database clients, GitHub CLI.

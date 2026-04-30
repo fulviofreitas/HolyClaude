@@ -1,0 +1,211 @@
+# =============================================================================
+# CloudCLI upstream sync (siteboon/claudecodeui)
+# =============================================================================
+# Daily check for a newer @siteboon/claude-code-ui release on the npm registry.
+# When found, repacks the tarball into vendor/artifacts/, rewrites the version
+# in the Dockerfile, and opens a PR labeled `cloudcli-sync`.
+#
+# This is the PRIMARY automation in this fork — upstream HolyClaude does not
+# bump this dependency on its own schedule.
+# =============================================================================
+
+name: cloudcli-sync
+
+on:
+  schedule:
+    - cron: "17 6 * * *"  # daily 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      target-version:
+        description: "Pin to a specific @siteboon/claude-code-ui version (default: latest)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: cloudcli-sync
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump CloudCLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Resolve current vendored version
+        id: current
+        run: |
+          set -euo pipefail
+          file=$(ls vendor/artifacts/siteboon-claude-code-ui-*.tgz | head -n1)
+          version=$(basename "$file" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Current vendored: $version ($file)"
+
+      - name: Resolve target version
+        id: target
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.target-version }}" ]; then
+            target="${{ inputs.target-version }}"
+          else
+            target=$(npm view @siteboon/claude-code-ui version)
+          fi
+          echo "version=$target" >> "$GITHUB_OUTPUT"
+          echo "Target: $target"
+
+      - name: Compare versions
+        id: cmp
+        env:
+          CUR: ${{ steps.current.outputs.version }}
+          TGT: ${{ steps.target.outputs.version }}
+        run: |
+          if [ "$CUR" = "$TGT" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already on $CUR — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Will bump $CUR -> $TGT"
+          fi
+
+      - name: Pack new tarball
+        if: steps.cmp.outputs.changed == 'true'
+        env:
+          TGT: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          tmpdir=$(mktemp -d)
+          cd "$tmpdir"
+          npm pack "@siteboon/claude-code-ui@${TGT}"
+          # npm pack writes siteboon-claude-code-ui-<ver>.tgz already.
+          tarball="siteboon-claude-code-ui-${TGT}.tgz"
+          if [ ! -f "$tarball" ]; then
+            # Fallback: rename whatever it produced.
+            produced=$(ls *.tgz | head -n1)
+            mv "$produced" "$tarball"
+          fi
+          mv "$tarball" "${GITHUB_WORKSPACE}/vendor/artifacts/${tarball}"
+
+      - name: Drop old tarball + rewrite Dockerfile
+        if: steps.cmp.outputs.changed == 'true'
+        env:
+          CUR: ${{ steps.current.outputs.version }}
+          TGT: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Remove the old vendored tarball (only if different from new one).
+          old="vendor/artifacts/siteboon-claude-code-ui-${CUR}.tgz"
+          new="vendor/artifacts/siteboon-claude-code-ui-${TGT}.tgz"
+          if [ "$old" != "$new" ] && [ -f "$old" ]; then rm "$old"; fi
+
+          # Rewrite Dockerfile references. Two lines reference the version
+          # explicitly:
+          #   COPY vendor/artifacts/siteboon-claude-code-ui-X.Y.Z.tgz /tmp/...
+          #   RUN  npm i -g /tmp/vendor/siteboon-claude-code-ui-X.Y.Z.tgz && rm ...
+          sed -i "s|siteboon-claude-code-ui-${CUR}\.tgz|siteboon-claude-code-ui-${TGT}.tgz|g" Dockerfile
+
+      - name: Detect rotted bundle patches
+        if: steps.cmp.outputs.changed == 'true'
+        id: rot
+        run: |
+          set -euo pipefail
+          # Patches in the Dockerfile target a hashed bundle file name.
+          # Detect every `index-*.js` bundle name that exists in the new tarball
+          # vs the names referenced in Dockerfile. This goes into the PR body.
+          tmp=$(mktemp -d)
+          tar -xzf vendor/artifacts/siteboon-claude-code-ui-${{ steps.target.outputs.version }}.tgz -C "$tmp"
+          actual=$(cd "$tmp" && find package/dist/assets -maxdepth 1 -type f -name 'index-*.js' -printf '%f\n' | head -n1 || true)
+          referenced=$(grep -oE 'index-[A-Za-z0-9_-]+\.js' Dockerfile | sort -u | tr '\n' ' ')
+          {
+            echo "actual=$actual"
+            echo "referenced=$referenced"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$actual" ] && ! echo "$referenced" | grep -q "$actual"; then
+            echo "rot=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::CloudCLI bundle hash changed: actual=$actual referenced=$referenced — Dockerfile patches will need refreshing."
+          else
+            echo "rot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch upstream release notes
+        if: steps.cmp.outputs.changed == 'true'
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TGT: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Try `vX.Y.Z` and `X.Y.Z` tag forms; siteboon's tagging is inconsistent.
+          body=""
+          for tag in "v${TGT}" "${TGT}"; do
+            if body=$(gh release view "$tag" --repo siteboon/claudecodeui --json body --jq .body 2>/dev/null); then
+              break
+            fi
+            body=""
+          done
+          if [ -z "$body" ]; then
+            body="No GitHub release found for tag v${TGT} or ${TGT}. See npm: https://www.npmjs.com/package/@siteboon/claude-code-ui/v/${TGT}"
+          fi
+          {
+            echo 'body<<NOTES_EOF'
+            echo "$body"
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.cmp.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: cloudcli-sync/${{ steps.target.outputs.version }}
+          base: master
+          commit-message: |
+            chore(cloudcli): bump @siteboon/claude-code-ui ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}
+          title: "chore(cloudcli): bump CloudCLI ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}"
+          labels: |
+            cloudcli-sync
+            automated
+          assignees: fulviofreitas
+          delete-branch: true
+          body: |
+            ## CloudCLI version bump
+
+            | | |
+            |---|---|
+            | Current vendored | `${{ steps.current.outputs.version }}` |
+            | Target version   | `${{ steps.target.outputs.version }}` |
+            | Bundle hash (actual)     | `${{ steps.rot.outputs.actual }}` |
+            | Bundle hash (referenced) | `${{ steps.rot.outputs.referenced }}` |
+            | Bundle patches need refresh | **${{ steps.rot.outputs.rot }}** |
+
+            ### Upstream release notes
+
+            ${{ steps.notes.outputs.body }}
+
+            ---
+
+            ### CI gates
+
+            - [ ] hadolint / shellcheck pass
+            - [ ] Image builds (full + slim)
+            - [ ] Smoke test reports served UI version `${{ steps.target.outputs.version }}`
+            - [ ] All `# patch v*` blocks in Dockerfile still applied (no `[patch] WARNING`)
+            - [ ] Trivy: no new HIGH/CRITICAL CVEs
+
+            > Generated by `.github/workflows/cloudcli-sync.yml`. Patches against
+            > the minified CloudCLI bundle target a content-hashed filename — if
+            > `Bundle patches need refresh: true`, the hash has changed and the
+            > Dockerfile sed/perl expressions must be updated before merging.

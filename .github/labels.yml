@@ -1,0 +1,21 @@
+# Repo labels managed declaratively. Apply with:
+#   gh label create -F .github/labels.yml --force
+# (or via a label-syncer action — not currently wired up).
+- name: cloudcli-sync
+  color: "0e8a16"
+  description: "Bumps vendored @siteboon/claude-code-ui"
+- name: upstream-sync
+  color: "5319e7"
+  description: "Sync from CoderLuii/HolyClaude"
+- name: automated
+  color: "ededed"
+  description: "Opened by automation"
+- name: autoupdate
+  color: "fbca04"
+  description: "Automated image-tag bump downstream"
+- name: holyclaude
+  color: "1d76db"
+  description: "Touches the HolyClaude app"
+- name: patch-rot
+  color: "d93f0b"
+  description: "CloudCLI bundle hash changed; Dockerfile patches need refreshing"
