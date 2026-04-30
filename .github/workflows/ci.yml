@@ -107,6 +107,7 @@ jobs:
         run: ./scripts/ci/smoke-test.sh holyclaude:ci-${{ matrix.variant }}
 
       - name: Trivy scan (HIGH,CRITICAL)
+        if: always()
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: holyclaude:ci-${{ matrix.variant }}
@@ -115,11 +116,9 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-          # Don't fail the job purely on vendored-OS package CVEs that have no
-          # fix yet. We re-run with sarif upload below for the security tab.
 
       - name: Upload Trivy SARIF
-        if: always()
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-${{ matrix.variant }}.sarif

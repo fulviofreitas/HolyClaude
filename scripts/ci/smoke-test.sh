@@ -63,16 +63,20 @@ done
 
 echo "==> CLI version checks"
 fail=0
+# claude and cursor-agent live under the claude user's ~/.local/bin which
+# the Dockerfile prepends to PATH via ENV. docker-exec's PATH is preserved
+# but the binaries themselves run with whatever HOME we give them; keep
+# absolute paths so the test does not rely on PATH ordering.
 for spec in \
-  "claude:claude --version" \
+  "claude:/home/claude/.local/bin/claude --version" \
   "gemini:gemini --version" \
   "codex:codex --version" \
-  "cursor-agent:cursor-agent --version" \
+  "cursor-agent:/home/claude/.local/bin/cursor-agent --version" \
   "task-master:task-master --version" \
 ; do
   name="${spec%%:*}"
   cmd="${spec#*:}"
-  if out=$(docker exec "${CONTAINER}" sh -lc "${cmd}" 2>&1); then
+  if out=$(docker exec "${CONTAINER}" sh -c "${cmd}" 2>&1); then
     echo "  ok    ${name}: ${out%%$'\n'*}"
   else
     echo "  FAIL  ${name}: ${out%%$'\n'*}"
@@ -81,7 +85,7 @@ for spec in \
 done
 
 echo "==> Chromium check"
-if out=$(docker exec "${CONTAINER}" sh -lc 'chromium --headless --no-sandbox --disable-gpu --version' 2>&1); then
+if out=$(docker exec "${CONTAINER}" sh -c 'chromium --headless --no-sandbox --disable-gpu --version' 2>&1); then
   echo "  ok    chromium: ${out%%$'\n'*}"
 else
   echo "  FAIL  chromium: ${out%%$'\n'*}"
