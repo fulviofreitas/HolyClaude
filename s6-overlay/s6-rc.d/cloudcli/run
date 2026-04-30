@@ -3,4 +3,11 @@ cd /workspace
 export HOME=/home/claude
 export WORKSPACES_ROOT=/workspace
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-deprecation"
-exec s6-setuidgid claude claude-code-ui --port 3001
+# @cloudcli-ai/cloudcli (>=1.28) renamed the bin from `claude-code-ui` to
+# `cloudcli`; we keep a fallback for the legacy @siteboon/claude-code-ui
+# tarball during the migration window so a vendor-rollback also boots.
+if command -v cloudcli >/dev/null 2>&1; then
+  exec s6-setuidgid claude cloudcli --port 3001
+else
+  exec s6-setuidgid claude claude-code-ui --port 3001
+fi
