@@ -1,9 +1,13 @@
 # =============================================================================
-# CloudCLI upstream sync (siteboon/claudecodeui)
+# CloudCLI upstream sync (@cloudcli-ai/cloudcli, formerly @siteboon/claude-code-ui)
 # =============================================================================
-# Daily check for a newer @siteboon/claude-code-ui release on the npm registry.
+# Daily check for a newer @cloudcli-ai/cloudcli release on the npm registry.
 # When found, repacks the tarball into vendor/artifacts/, rewrites the version
 # in the Dockerfile, and opens a PR labeled `cloudcli-sync`.
+#
+# History: the upstream package was renamed from @siteboon/claude-code-ui to
+# @cloudcli-ai/cloudcli at the @siteboon@2.0.0 stub release. We track the new
+# package; the legacy name is recorded in the divergence policy.
 #
 # This is the PRIMARY automation in this fork — upstream HolyClaude does not
 # bump this dependency on its own schedule.
@@ -17,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       target-version:
-        description: "Pin to a specific @siteboon/claude-code-ui version (default: latest)"
+        description: "Pin to a specific @cloudcli-ai/cloudcli version (default: latest)"
         required: false
         default: ""
 
@@ -28,6 +32,10 @@ permissions:
 concurrency:
   group: cloudcli-sync
   cancel-in-progress: false
+
+env:
+  NPM_PKG: "@cloudcli-ai/cloudcli"
+  VENDOR_PREFIX: "cloudcli-ai-cloudcli"
 
 jobs:
   bump:
@@ -49,9 +57,12 @@ jobs:
         id: current
         run: |
           set -euo pipefail
-          file=$(ls vendor/artifacts/siteboon-claude-code-ui-*.tgz | head -n1)
-          version=$(basename "$file" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          file=$(ls vendor/artifacts/${VENDOR_PREFIX}-*.tgz 2>/dev/null | head -n1 || true)
+          if [ -z "$file" ]; then
+            echo "::error::no vendored ${VENDOR_PREFIX}-*.tgz found"; exit 1
+          fi
+          version=$(basename "$file" | sed -E "s/^${VENDOR_PREFIX}-(.+)\.tgz$/\1/")
+          echo "file=$file"       >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Current vendored: $version ($file)"
 
@@ -62,7 +73,7 @@ jobs:
           if [ -n "${{ inputs.target-version }}" ]; then
             target="${{ inputs.target-version }}"
           else
-            target=$(npm view @siteboon/claude-code-ui version)
+            target=$(npm view "${NPM_PKG}" version)
           fi
           echo "version=$target" >> "$GITHUB_OUTPUT"
           echo "Target: $target"
@@ -89,11 +100,9 @@ jobs:
           set -euo pipefail
           tmpdir=$(mktemp -d)
           cd "$tmpdir"
-          npm pack "@siteboon/claude-code-ui@${TGT}"
-          # npm pack writes siteboon-claude-code-ui-<ver>.tgz already.
-          tarball="siteboon-claude-code-ui-${TGT}.tgz"
+          npm pack "${NPM_PKG}@${TGT}"
+          tarball="${VENDOR_PREFIX}-${TGT}.tgz"
           if [ ! -f "$tarball" ]; then
-            # Fallback: rename whatever it produced.
             produced=$(ls *.tgz | head -n1)
             mv "$produced" "$tarball"
           fi
@@ -106,32 +115,29 @@ jobs:
           TGT: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
-          # Remove the old vendored tarball (only if different from new one).
-          old="vendor/artifacts/siteboon-claude-code-ui-${CUR}.tgz"
-          new="vendor/artifacts/siteboon-claude-code-ui-${TGT}.tgz"
+          old="vendor/artifacts/${VENDOR_PREFIX}-${CUR}.tgz"
+          new="vendor/artifacts/${VENDOR_PREFIX}-${TGT}.tgz"
           if [ "$old" != "$new" ] && [ -f "$old" ]; then rm "$old"; fi
-
-          # Rewrite Dockerfile references. Two lines reference the version
-          # explicitly:
-          #   COPY vendor/artifacts/siteboon-claude-code-ui-X.Y.Z.tgz /tmp/...
-          #   RUN  npm i -g /tmp/vendor/siteboon-claude-code-ui-X.Y.Z.tgz && rm ...
-          sed -i "s|siteboon-claude-code-ui-${CUR}\.tgz|siteboon-claude-code-ui-${TGT}.tgz|g" Dockerfile
+          # Three Dockerfile lines reference the version explicitly:
+          #   COPY vendor/artifacts/cloudcli-ai-cloudcli-X.Y.Z.tgz /tmp/...
+          #   COPY ... /tmp/vendor/cloudcli-ai-cloudcli-X.Y.Z.tgz
+          #   RUN  npm i -g /tmp/vendor/cloudcli-ai-cloudcli-X.Y.Z.tgz && rm ...
+          sed -i "s|${VENDOR_PREFIX}-${CUR}\.tgz|${VENDOR_PREFIX}-${TGT}.tgz|g" Dockerfile
 
       - name: Detect rotted bundle patches
         if: steps.cmp.outputs.changed == 'true'
         id: rot
+        env:
+          TGT: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
-          # Patches in the Dockerfile target a hashed bundle file name.
-          # Detect every `index-*.js` bundle name that exists in the new tarball
-          # vs the names referenced in Dockerfile. This goes into the PR body.
           tmp=$(mktemp -d)
-          tar -xzf vendor/artifacts/siteboon-claude-code-ui-${{ steps.target.outputs.version }}.tgz -C "$tmp"
-          actual=$(cd "$tmp" && find package/dist/assets -maxdepth 1 -type f -name 'index-*.js' -printf '%f\n' | head -n1 || true)
+          tar -xzf "vendor/artifacts/${VENDOR_PREFIX}-${TGT}.tgz" -C "$tmp"
+          actual=$(cd "$tmp" && find package/dist/assets -maxdepth 1 -type f -name 'index-*.js' -printf '%f\n' 2>/dev/null | head -n1 || true)
           referenced=$(grep -oE 'index-[A-Za-z0-9_-]+\.js' Dockerfile | sort -u | tr '\n' ' ')
           {
-            echo "actual=$actual"
-            echo "referenced=$referenced"
+            echo "actual=${actual:-unknown}"
+            echo "referenced=${referenced:-none}"
           } >> "$GITHUB_OUTPUT"
           if [ -n "$actual" ] && ! echo "$referenced" | grep -q "$actual"; then
             echo "rot=true" >> "$GITHUB_OUTPUT"
@@ -148,7 +154,6 @@ jobs:
           TGT: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
-          # Try `vX.Y.Z` and `X.Y.Z` tag forms; siteboon's tagging is inconsistent.
           body=""
           for tag in "v${TGT}" "${TGT}"; do
             if body=$(gh release view "$tag" --repo siteboon/claudecodeui --json body --jq .body 2>/dev/null); then
@@ -157,7 +162,7 @@ jobs:
             body=""
           done
           if [ -z "$body" ]; then
-            body="No GitHub release found for tag v${TGT} or ${TGT}. See npm: https://www.npmjs.com/package/@siteboon/claude-code-ui/v/${TGT}"
+            body="No GitHub release found for tag v${TGT} or ${TGT}. See npm: https://www.npmjs.com/package/${NPM_PKG}/v/${TGT}"
           fi
           {
             echo 'body<<NOTES_EOF'
@@ -173,7 +178,7 @@ jobs:
           branch: cloudcli-sync/${{ steps.target.outputs.version }}
           base: master
           commit-message: |
-            chore(cloudcli): bump @siteboon/claude-code-ui ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}
+            chore(cloudcli): bump @cloudcli-ai/cloudcli ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}
           title: "chore(cloudcli): bump CloudCLI ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}"
           labels: |
             cloudcli-sync
@@ -185,6 +190,7 @@ jobs:
 
             | | |
             |---|---|
+            | npm package | `@cloudcli-ai/cloudcli` |
             | Current vendored | `${{ steps.current.outputs.version }}` |
             | Target version   | `${{ steps.target.outputs.version }}` |
             | Bundle hash (actual)     | `${{ steps.rot.outputs.actual }}` |
@@ -202,7 +208,7 @@ jobs:
             - [ ] hadolint / shellcheck pass
             - [ ] Image builds (full + slim)
             - [ ] Smoke test reports served UI version `${{ steps.target.outputs.version }}`
-            - [ ] All `# patch v*` blocks in Dockerfile still applied (no `[patch] WARNING`)
+            - [ ] Patches still applied (smoke test prints WARN, not FAIL, when stale — they are UX tweaks, not required for CloudCLI to function)
             - [ ] Trivy: no new HIGH/CRITICAL CVEs
 
             > Generated by `.github/workflows/cloudcli-sync.yml`. Patches against

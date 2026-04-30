@@ -22,8 +22,16 @@ LOGFILE="$(mktemp)"
 HOST_PORT="${HOST_PORT:-3091}"
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
-vendored_tarball="$(ls "${repo_root}/vendor/artifacts"/siteboon-claude-code-ui-*.tgz | head -n1)"
-vendored_version="$(basename "${vendored_tarball}" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')"
+vendored_tarball="$(ls "${repo_root}/vendor/artifacts"/cloudcli-ai-cloudcli-*.tgz 2>/dev/null | head -n1)"
+if [ -z "${vendored_tarball}" ]; then
+  # Legacy fallback during the @siteboon → @cloudcli-ai migration.
+  vendored_tarball="$(ls "${repo_root}/vendor/artifacts"/siteboon-claude-code-ui-*.tgz 2>/dev/null | head -n1)"
+  vendored_version="$(basename "${vendored_tarball}" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')"
+  vendored_pkg_path="/usr/local/lib/node_modules/@siteboon/claude-code-ui"
+else
+  vendored_version="$(basename "${vendored_tarball}" | sed -E 's/^cloudcli-ai-cloudcli-(.+)\.tgz$/\1/')"
+  vendored_pkg_path="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli"
+fi
 
 cleanup() {
   rc=$?
@@ -120,8 +128,8 @@ served=""
 # The simplest stable signature is the package.json shipped inside the
 # installed module — it is read at startup. We exec into the container and
 # read it directly rather than relying on an undocumented /version endpoint.
-served=$(docker exec "${CONTAINER}" sh -lc \
-  "node -e 'process.stdout.write(require(\"/usr/local/lib/node_modules/@siteboon/claude-code-ui/package.json\").version)'" \
+served=$(docker exec "${CONTAINER}" sh -c \
+  "node -e 'process.stdout.write(require(\"${vendored_pkg_path}/package.json\").version)'" \
   2>/dev/null || true)
 
 if [ -z "${served}" ]; then
@@ -137,15 +145,19 @@ else
   fi
 fi
 
-echo "==> Patch-warning scan"
+echo "==> Patch-warning scan (advisory)"
 # If the Dockerfile's sed/perl patches did not match, they print
 # `[patch] WARNING: ...` during the build. Those warnings live in the build
 # log, not the container — so we re-derive: every patch sed expression looked
-# for an anchor string. If the anchor is no longer present in the patched file,
-# the patch never applied. This is the runtime canary.
+# for an anchor string. If the anchor is no longer present in the patched
+# file, the patch never applied. The patches are fork-specific UI tweaks
+# (model selector, websocket binary frames, scroll preservation) that
+# improve UX but are not required for CloudCLI to function — so missing
+# patches WARN here rather than FAIL, and the cloudcli-sync PR description
+# surfaces the same fact for human attention.
 patch_targets=(
-  "/usr/local/lib/node_modules/@siteboon/claude-code-ui/server/index.js:upstream.send(data, { binary: isBinary })"
-  "/usr/local/lib/node_modules/@siteboon/claude-code-ui/server/routes/commands.js:newModel: args.length"
+  "${vendored_pkg_path}/server/index.js:upstream.send(data, { binary: isBinary })"
+  "${vendored_pkg_path}/server/routes/commands.js:newModel: args.length"
 )
 for entry in "${patch_targets[@]}"; do
   file="${entry%%:*}"
@@ -153,9 +165,8 @@ for entry in "${patch_targets[@]}"; do
   if docker exec "${CONTAINER}" grep -q -- "${marker}" "${file}" 2>/dev/null; then
     echo "  ok    patch present in ${file}"
   else
-    echo "  FAIL  patch missing in ${file} (marker: ${marker})"
-    echo "        the Dockerfile patch block likely needs refreshing for this CloudCLI version"
-    fail=$((fail+1))
+    echo "  WARN  patch missing in ${file} (marker: ${marker})"
+    echo "        Dockerfile patch block likely needs refreshing for this CloudCLI version"
   fi
 done
 

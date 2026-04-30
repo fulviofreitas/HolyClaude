@@ -42,7 +42,8 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 >   and `…-slim` (slim). Tagged additionally with
 >   `cloudcli-<X.Y.Z>` so you can trace which UI version is in which image.
 > - **Update flow — CloudCLI-driven (primary):** a daily workflow polls
->   `npm view @siteboon/claude-code-ui version`. When it advances, the bot
+>   `npm view @cloudcli-ai/cloudcli version` (the renamed continuation of
+>   `@siteboon/claude-code-ui`). When it advances, the bot
 >   `npm pack`s the new tarball into `vendor/artifacts/`, rewrites the
 >   Dockerfile reference, and opens a PR labeled `cloudcli-sync`. CI
 >   smoke-tests the built image end-to-end (including a runtime check that
