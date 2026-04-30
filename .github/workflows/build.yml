@@ -77,8 +77,14 @@ jobs:
           fork_counter=$(git rev-list --count "${latest_tag}..HEAD" 2>/dev/null || echo "0")
 
           # Vendored CloudCLI version.
-          tarball=$(ls vendor/artifacts/siteboon-claude-code-ui-*.tgz | head -n1)
-          cloudcli=$(basename "$tarball" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')
+          tarball=$(ls vendor/artifacts/cloudcli-ai-cloudcli-*.tgz 2>/dev/null | head -n1)
+          if [ -z "$tarball" ]; then
+            # Legacy fallback during the @siteboon → @cloudcli-ai migration.
+            tarball=$(ls vendor/artifacts/siteboon-claude-code-ui-*.tgz | head -n1)
+            cloudcli=$(basename "$tarball" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')
+          else
+            cloudcli=$(basename "$tarball" | sed -E 's/^cloudcli-ai-cloudcli-(.+)\.tgz$/\1/')
+          fi
 
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             # Tag push: clean semver, no -fork.N suffix.
