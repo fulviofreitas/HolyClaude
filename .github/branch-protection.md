@@ -1,14 +1,20 @@
-# Branch protection (intent)
+# Branch protection
 
-This file documents the protection rules that should be configured on
-`master`. Configure via GitHub UI or `gh api` (script below).
+This file documents the protection rules currently configured on `master`.
+They were applied via `gh api` on 2026-04-30 (see `Apply` section below for
+the exact command if they ever need to be reapplied).
+
+> Solo-maintainer note: `required_approving_review_count` is **0**, not 1
+> as a multi-developer fork would use. With `0` and `require_code_owner_reviews=true`
+> the maintainer can still self-merge their own PRs while preserving CODEOWNERS
+> visibility on what changed.
 
 ## Required settings on `master`
 
 | Setting                               | Value                                            |
 |---------------------------------------|--------------------------------------------------|
 | Require pull request before merging   | yes                                              |
-| Required reviewers                    | 1                                                |
+| Required reviewers                    | 0 (solo-maintainer)                              |
 | Dismiss stale reviews on push         | yes                                              |
 | Require review from Code Owners       | yes                                              |
 | Require status checks                 | yes — `lint`, `build-and-smoke (full)`, `build-and-smoke (slim)` |
@@ -19,19 +25,33 @@ This file documents the protection rules that should be configured on
 
 ## Apply with gh CLI
 
+The `-F` flag for `gh api` doesn't handle nested objects cleanly — use
+`--input -` with a JSON payload instead:
+
 ```bash
-gh api -X PUT \
-  repos/fulviofreitas/HolyClaude/branches/master/protection \
-  -F required_status_checks.strict=true \
-  -F 'required_status_checks.contexts[]=lint' \
-  -F 'required_status_checks.contexts[]=build-and-smoke (full)' \
-  -F 'required_status_checks.contexts[]=build-and-smoke (slim)' \
-  -F enforce_admins=false \
-  -F required_pull_request_reviews.required_approving_review_count=1 \
-  -F required_pull_request_reviews.dismiss_stale_reviews=true \
-  -F required_pull_request_reviews.require_code_owner_reviews=true \
-  -F restrictions=
+cat <<'JSON' | gh api -X PUT repos/fulviofreitas/HolyClaude/branches/master/protection --input -
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "Lint (hadolint + shellcheck + yamllint)",
+      "Build & smoke (full)",
+      "Build & smoke (slim)"
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 0,
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": true
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+JSON
 ```
 
-> Apply manually after the first successful CI run, so the check names
-> exist as required-context options in the GitHub UI.
+The status-check context names are the `name:` strings used by the jobs in
+`.github/workflows/ci.yml` — if those job names change, the protection
+rules need to be re-applied with the new names.
