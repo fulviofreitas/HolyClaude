@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Hadolint (Dockerfile)
-        uses: hadolint/hadolint-action@v3
+        uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: Dockerfile
           # The upstream Dockerfile has historical violations (DL3008 unpinned
