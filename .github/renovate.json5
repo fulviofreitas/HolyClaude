@@ -1,0 +1,140 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // ============================================================================
+  // Base configuration
+  // ============================================================================
+  extends: ["config:recommended", ":semanticCommits"],
+  timezone: "America/Los_Angeles",
+  schedule: ["at any time"],
+  prHourlyLimit: 0,
+  prConcurrentLimit: 0,
+
+  // ============================================================================
+  // Branch / commit / PR shape
+  // ============================================================================
+  branchPrefix: "deps/",
+  commitMessagePrefix: "chore(deps):",
+  commitMessageAction: "update",
+  commitMessageTopic: "{{{depName}}}",
+  commitMessageExtra: "to {{{newVersion}}}",
+  commitBody: "",
+  commitBodyTable: false,
+
+  labels: ["dependencies", "renovate"],
+  assignees: ["fulviofreitas"],
+  dependencyDashboard: true,
+  dependencyDashboardTitle: "📦 Renovate Dependency Dashboard",
+  dependencyDashboardAutoclose: true,
+  recreateWhen: "auto",
+
+  prBodyTemplate: "{{{header}}}{{{table}}}{{{warnings}}}{{{notes}}}{{{changelogs}}}{{{controls}}}{{{footer}}}",
+  fetchChangeLogs: "pr",
+
+  // ============================================================================
+  // Manager scope
+  // ============================================================================
+  // Renovate is intentionally narrow on this fork. The vendored CloudCLI
+  // tarball under vendor/artifacts/ is owned by the cloudcli-sync workflow,
+  // which does the npm-pack + Dockerfile rewrite Renovate cannot do. We keep
+  // Renovate out of the way for that path.
+  enabledManagers: ["github-actions", "dockerfile", "custom.regex"],
+
+  // Don't try to update anything in the vendor tarball area. Belt-and-suspenders
+  // alongside the manager whitelist above.
+  ignorePaths: [
+    "vendor/**",
+    "docs/translations/**",
+  ],
+
+  // ============================================================================
+  // Custom (regex) managers
+  // ============================================================================
+  customManagers: [
+    // s6-overlay — Dockerfile build arg `ARG S6_OVERLAY_VERSION=3.2.0.2`
+    // tracks the github-releases of just-containers/s6-overlay. Tags drop the
+    // `v` prefix to match the build arg's value.
+    {
+      customType: "regex",
+      managerFilePatterns: ["(^|/)Dockerfile$"],
+      matchStrings: [
+        "ARG S6_OVERLAY_VERSION=(?<currentValue>[0-9.]+)",
+      ],
+      depNameTemplate: "just-containers/s6-overlay",
+      datasourceTemplate: "github-releases",
+      extractVersionTemplate: "^v?(?<version>.+)$",
+    },
+  ],
+
+  // ============================================================================
+  // Package rules
+  // ============================================================================
+  packageRules: [
+    // GitHub Actions: group + auto-merge minor/patch.
+    {
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "github-actions",
+      description: "GitHub Actions minor/patch/digest updates (auto-merge)",
+      automerge: true,
+      automergeType: "pr",
+      automergeStrategy: "squash",
+      commitMessagePrefix: "chore(deps-actions):",
+      commitMessageTopic: "GitHub Actions",
+    },
+    {
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "renovate", "major"],
+    },
+
+    // Dockerfile base image (node) — minor/patch auto-merge, major manual.
+    {
+      matchManagers: ["dockerfile"],
+      matchPackageNames: ["node"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "node-base-image",
+      automerge: true,
+      automergeType: "pr",
+      automergeStrategy: "squash",
+      commitMessagePrefix: "chore(deps-docker):",
+    },
+    {
+      matchManagers: ["dockerfile"],
+      matchPackageNames: ["node"],
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "renovate", "major"],
+    },
+
+    // s6-overlay (custom regex) — never auto-merge; the rootfs layout
+    // occasionally changes on minor bumps and we want to read the release
+    // notes by hand.
+    {
+      matchDatasources: ["github-releases"],
+      matchPackageNames: ["just-containers/s6-overlay"],
+      groupName: "s6-overlay",
+      automerge: false,
+      commitMessagePrefix: "chore(deps-s6):",
+    },
+
+    // Workflow-arsenal action references are pinned to @master by convention
+    // (see workflow-arsenal/README.md "Versioning & Pinning"). Skip them so
+    // Renovate doesn't try to convert them to commit SHAs.
+    {
+      matchPackageNames: [
+        "fulviofreitas/workflow-arsenal",
+      ],
+      enabled: false,
+    },
+  ],
+
+  // ============================================================================
+  // Vulnerability alerts
+  // ============================================================================
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["security"],
+  },
+}

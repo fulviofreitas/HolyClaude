@@ -23,6 +23,15 @@ Kubernetes cluster.
 
 ## Sync strategy
 
+> Three independent automations watch three different upstreams. Each has a
+> narrow scope so they do not collide.
+>
+> | Automation | What it tracks | Why it can't be merged with the others |
+> |---|---|---|
+> | `upstream-sync` | `CoderLuii/HolyClaude` master | git-level merge, not a dependency bump |
+> | `cloudcli-sync` | npm `@cloudcli-ai/cloudcli` (vendored as a tarball) | requires `npm pack` + binary commit + Dockerfile rewrite, which Renovate cannot do |
+> | `renovate` | github-actions `uses:` versions, node base image, `S6_OVERLAY_VERSION` ARG | standard Renovate scope; auto-merge minor/patch |
+
 1. `holyclaude-upstream-sync` workflow runs daily. When `CoderLuii/HolyClaude`
    master advances, it opens a PR labeled `upstream-sync` into our `master`.
 2. `cloudcli-sync` workflow runs daily. When `npm view @cloudcli-ai/cloudcli version`

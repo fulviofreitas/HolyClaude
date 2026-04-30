@@ -1,0 +1,66 @@
+# =============================================================================
+# Renovate — automated dependency updates
+# =============================================================================
+# Scope is intentionally narrow (see .github/renovate.json5):
+#   - github-actions versions in our own workflow files
+#   - the node base image in Dockerfile
+#   - S6_OVERLAY_VERSION ARG (custom regex manager)
+#
+# The vendored @cloudcli-ai/cloudcli tarball under vendor/artifacts/ is NOT
+# Renovate's concern — the cloudcli-sync workflow owns that path because it
+# requires `npm pack` + Dockerfile rewrite, which Renovate cannot do.
+# =============================================================================
+
+name: renovate
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # 4× daily, aligned with workflow-arsenal pattern
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run mode (no PRs created)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      log_level:
+        description: "Log level"
+        required: false
+        default: "info"
+        type: choice
+        options: ["debug", "info", "warn"]
+      reset_cache:
+        description: "Reset repository cache"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    name: Run Renovate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Renovate
+        uses: fulviofreitas/workflow-arsenal/.github/actions/renovate@master
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          config-file: ".github/renovate.json5"
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}
+          log-level: ${{ github.event.inputs.log_level || 'info' }}
+          reset-cache: ${{ github.event.inputs.reset_cache || 'false' }}
