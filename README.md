@@ -38,8 +38,10 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 > cadence than upstream and to deploy the resulting image to a private
 > Kubernetes cluster.
 >
-> - **Image**: `ghcr.io/fulviofreitas/holyclaude:<semver>-fork.<n>` (full)
->   and `…-slim` (slim). Tagged additionally with
+> - **Image**: `ghcr.io/fulviofreitas/holyclaude:<semver>-fork.<n>` (and
+>   `latest`). Slim variant only — the upstream `full` variant is too
+>   heavy for what we use it for; the upstream Dockerfile blocks remain
+>   intact, the build job just doesn't run them. Tagged additionally with
 >   `cloudcli-<X.Y.Z>` so you can trace which UI version is in which image.
 > - **Update flow — CloudCLI-driven (primary):** a daily workflow polls
 >   `npm view @cloudcli-ai/cloudcli version` (the renamed continuation of

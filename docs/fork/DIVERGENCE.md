@@ -55,7 +55,10 @@ Kubernetes cluster.
    fork-specific UX improvements until the patches are re-ported.
 4. Merge to `master` triggers the `build` workflow which publishes
    `ghcr.io/fulviofreitas/holyclaude:<semver>-fork.<n>` plus
-   `cloudcli-<X.Y.Z>`, `latest`, `slim`, and `sha-<short>` tags.
+   `cloudcli-<X.Y.Z>`, `latest`, and `sha-<short>` tags. Slim variant
+   only — the upstream `full` variant blocks (Junie/OpenCode/Azure
+   CLI/PDF/video tooling) are still in the Dockerfile but the build job
+   does not exercise them.
 5. The cluster-side image switchover (from `coderluii/holyclaude:*` to
    `ghcr.io/fulviofreitas/holyclaude:*`) is owned by the GitOps repo
    `fulviofreitas/ff-k8s` and is wired up there. The

@@ -17,7 +17,7 @@ the exact command if they ever need to be reapplied).
 | Required reviewers                    | 0 (solo-maintainer)                              |
 | Dismiss stale reviews on push         | yes                                              |
 | Require review from Code Owners       | yes                                              |
-| Require status checks                 | yes — `lint`, `build-and-smoke (full)`, `build-and-smoke (slim)` |
+| Require status checks                 | yes — `Lint (...)`, `Build & smoke (slim)`       |
 | Require branches to be up to date     | yes                                              |
 | Require linear history                | no (we use merge commits for upstream syncs)     |
 | Allow force pushes                    | no                                               |
@@ -35,7 +35,6 @@ cat <<'JSON' | gh api -X PUT repos/fulviofreitas/HolyClaude/branches/master/prot
     "strict": true,
     "contexts": [
       "Lint (hadolint + shellcheck + yamllint)",
-      "Build & smoke (full)",
       "Build & smoke (slim)"
     ]
   },
