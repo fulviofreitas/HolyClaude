@@ -167,10 +167,10 @@ RUN if [ "$VARIANT" = "full" ]; then \
     npm i -g opencode-ai; \
     fi
 
-COPY vendor/artifacts/siteboon-claude-code-ui-1.26.3.tgz /tmp/vendor/siteboon-claude-code-ui-1.26.3.tgz
+COPY vendor/artifacts/siteboon-claude-code-ui-2.0.0.tgz /tmp/vendor/siteboon-claude-code-ui-2.0.0.tgz
 
 # ---------- CloudCLI (web UI for Claude Code) ----------
-RUN npm i -g /tmp/vendor/siteboon-claude-code-ui-1.26.3.tgz && rm -f /tmp/vendor/siteboon-claude-code-ui-1.26.3.tgz
+RUN npm i -g /tmp/vendor/siteboon-claude-code-ui-2.0.0.tgz && rm -f /tmp/vendor/siteboon-claude-code-ui-2.0.0.tgz
 RUN touch /usr/local/lib/node_modules/@siteboon/claude-code-ui/.env
 
 # ---------- Patch: preserve WebSocket frame type in plugin proxy (Issue #11) ----------
