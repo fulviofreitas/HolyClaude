@@ -1,15 +1,19 @@
 # =============================================================================
-# CI — pull-request gate
+# ci — pull-request gate + release trigger
 # =============================================================================
+# Chain: ci.yml -> release.yml (workflow_run) -> tag push v* -> docker-publish.yml
+#
 # Runs on every PR + on push to master. Validates:
 #   - Dockerfile lints (hadolint)
 #   - Shell scripts lint (shellcheck)
 #   - Image builds for amd64 (no push)
 #   - Smoke test passes inside the freshly built image
-#   - Trivy scan: no new HIGH/CRITICAL CVEs
+#   - Trivy scan: no new HIGH/CRITICAL CVEs (advisory)
 #
-# Push-to-registry happens separately in `build.yml` after this gate has
-# succeeded on `master`.
+# The `ci-success` aggregator job is the single required status check for
+# branch protection — it succeeds iff every parallel job above succeeded.
+# release.yml uses `workflow_run: ci, conclusion=success` to gate semantic
+# release, so a failing CI on master never publishes.
 # =============================================================================
 
 name: ci
@@ -141,3 +145,37 @@ jobs:
         with:
           sarif_file: trivy-${{ matrix.variant }}.sarif
           category: trivy-${{ matrix.variant }}
+
+  # ===========================================================================
+  # ci-success — single required check for branch protection
+  # ===========================================================================
+  # Aggregates the parallel jobs above. release.yml's workflow_run trigger
+  # checks `conclusion: success` on the parent ci run, which is determined by
+  # whether every needed job succeeded — so this aggregator is also what
+  # gates the release pipeline.
+  # ===========================================================================
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    needs: [lint, build-and-smoke]
+    if: always()
+    steps:
+      - name: Verify required jobs passed
+        run: |
+          set -euo pipefail
+          LINT="${{ needs.lint.result }}"
+          BUILD="${{ needs.build-and-smoke.result }}"
+          {
+            echo "## ci-success"
+            echo
+            echo "| Job | Result |"
+            echo "|---|---|"
+            echo "| lint | ${LINT} |"
+            echo "| build-and-smoke | ${BUILD} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$LINT" == "success" && "$BUILD" == "success" ]]; then
+            echo "All required checks passed."
+            exit 0
+          fi
+          echo "::error::ci-success failed (lint=$LINT, build-and-smoke=$BUILD)"
+          exit 1

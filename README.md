@@ -34,30 +34,49 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 >
 > This repository is **`fulviofreitas/HolyClaude`**, a personal fork of
 > [`CoderLuii/HolyClaude`](https://github.com/CoderLuii/HolyClaude). It
-> exists to keep the bundled CloudCLI (`siteboon/claudecodeui`) on a faster
-> cadence than upstream and to deploy the resulting image to a private
-> Kubernetes cluster.
+> exists to keep the bundled CloudCLI (`@cloudcli-ai/cloudcli`, the renamed
+> continuation of `@siteboon/claude-code-ui`) on a faster cadence than
+> upstream and to deploy the resulting image to a private Kubernetes
+> cluster.
 >
-> - **Image**: `ghcr.io/fulviofreitas/holyclaude:<semver>-fork.<n>` (and
->   `latest`). Slim variant only — the upstream `full` variant is too
+> - **Image**: `ghcr.io/fulviofreitas/holyclaude` — slim variant only. The
+>   upstream `full` variant (Junie/OpenCode/Azure CLI/PDF/video) is too
 >   heavy for what we use it for; the upstream Dockerfile blocks remain
->   intact, the build job just doesn't run them. Tagged additionally with
->   `cloudcli-<X.Y.Z>` so you can trace which UI version is in which image.
-> - **Update flow — CloudCLI-driven (primary):** a daily workflow polls
->   `npm view @cloudcli-ai/cloudcli version` (the renamed continuation of
->   `@siteboon/claude-code-ui`). When it advances, the bot
+>   intact, the build job just doesn't run them.
+> - **Tags** (published per release):
+>   `vX.Y.Z`, `X.Y.Z`, `X.Y`, `<short-sha>`, and `latest`. The fork has
+>   its own semver lineage (driven by semantic-release on this repo), not
+>   upstream's. The bundled CloudCLI version is exposed as the OCI
+>   annotation `io.holyclaude.cloudcli-version` (queryable via
+>   `docker image inspect`), not as a tag.
+> - **Release pipeline** — three workflows chain via `workflow_run` and
+>   tag-push, each gated by the previous step:
+>   1. [`ci.yml`](.github/workflows/ci.yml) — hadolint, shellcheck,
+>      yamllint, amd64 smoke build, Trivy. Aggregator job `ci-success` is
+>      the single required check for branch protection.
+>   2. [`release.yml`](.github/workflows/release.yml) — runs on
+>      `workflow_run` after `ci` succeeds on master, executes
+>      `semantic-release` (config in [`.releaserc.json`](.releaserc.json)),
+>      cuts `vX.Y.Z`, and pushes the tag with a GitHub App token so
+>      downstream workflows fire.
+>   3. [`docker-publish.yml`](.github/workflows/docker-publish.yml) —
+>      triggered by the `v*` tag push, multi-arch (amd64+arm64) build via
+>      [`fulviofreitas/workflow-arsenal`](https://github.com/fulviofreitas/workflow-arsenal)'s
+>      reusable `docker-build.yml`, push to GHCR with SBOM + provenance.
+> - **Update flow — CloudCLI-driven (primary):**
+>   [`cloudcli-sync.yml`](.github/workflows/cloudcli-sync.yml) polls
+>   `npm view @cloudcli-ai/cloudcli version` daily; on advance it
 >   `npm pack`s the new tarball into `vendor/artifacts/`, rewrites the
->   Dockerfile reference, and opens a PR labeled `cloudcli-sync`. CI
->   smoke-tests the built image end-to-end (including a runtime check that
->   the patched bundle still has the patched behavior). Merge → publish to
->   GHCR. Renovate in `fulviofreitas/ff-k8s` then picks up the new tag and
->   ArgoCD reconciles.
+>   Dockerfile, and opens a PR labeled `cloudcli-sync`. Merge → ci →
+>   release → docker-publish → Renovate in `fulviofreitas/ff-k8s` picks
+>   up the new tag → ArgoCD reconciles.
 > - **Update flow — HolyClaude-driven:** identical pipeline, but the
->   trigger is a daily workflow that detects new commits/tags on
->   `CoderLuii/HolyClaude` and opens a PR labeled `upstream-sync`.
+>   trigger is [`upstream-sync.yml`](.github/workflows/upstream-sync.yml),
+>   which detects new commits/tags on `CoderLuii/HolyClaude` and opens a
+>   PR labeled `upstream-sync`.
 > - **Rollback:** the cluster pins an immutable tag, not `latest`. To roll
->   back, edit `kubernetes/apps/holyclaude/deployment.yaml` in
->   `fulviofreitas/ff-k8s` and set `image:` to a previous tag from
+>   back, edit `k8s-homelab/kubernetes/apps/holyclaude/deployment.yaml`
+>   in `fulviofreitas/ff-k8s` and set `image:` to a previous tag from
 >   [GHCR](https://github.com/fulviofreitas/HolyClaude/pkgs/container/holyclaude).
 >   ArgoCD reconciles within minutes.
 > - **Divergence policy:** see [`docs/fork/DIVERGENCE.md`](docs/fork/DIVERGENCE.md)

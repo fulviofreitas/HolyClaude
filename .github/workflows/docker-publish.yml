@@ -1,0 +1,78 @@
+# =============================================================================
+# docker-publish — multi-arch build + GHCR push, triggered by v* tag
+# =============================================================================
+# Chain: ci.yml -> release.yml -> tag push v* -> docker-publish.yml
+#
+# Triggers:
+#   - push of a tag matching v* (cut by semantic-release in release.yml)
+#   - workflow_dispatch (manual rebuild of an existing tag)
+#
+# The reusable workflow at fulviofreitas/workflow-arsenal handles:
+#   - parallel native amd64 + arm64 builds, manifest merge
+#   - docker/metadata-action with semver tag derivation
+#   - SBOM + provenance attestation
+#
+# Slim-only: the upstream Dockerfile retains its `ARG VARIANT=full` blocks
+# (Junie/OpenCode/Azure CLI/PDF/video). Re-add a parallel job if it ever
+# becomes worth the build minutes.
+# =============================================================================
+
+name: docker-publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cloudcli-version:
+    name: Derive cloudcli version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: derive
+        run: |
+          set -euo pipefail
+          tarball=$(ls vendor/artifacts/cloudcli-ai-cloudcli-*.tgz 2>/dev/null | head -n1 || true)
+          if [ -z "$tarball" ]; then
+            tarball=$(ls vendor/artifacts/siteboon-claude-code-ui-*.tgz | head -n1)
+            version=$(basename "$tarball" | sed -E 's/^siteboon-claude-code-ui-(.+)\.tgz$/\1/')
+          else
+            version=$(basename "$tarball" | sed -E 's/^cloudcli-ai-cloudcli-(.+)\.tgz$/\1/')
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "cloudcli=${version}" >> "$GITHUB_STEP_SUMMARY"
+
+  docker:
+    name: build & push
+    needs: cloudcli-version
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: fulviofreitas/workflow-arsenal/.github/workflows/docker-build.yml@master
+    with:
+      image-name: ghcr.io/${{ github.repository_owner }}/holyclaude
+      context: "."
+      dockerfile: Dockerfile
+      push: true
+      build-args: |
+        VARIANT=slim
+      annotations: |
+        org.opencontainers.image.title=HolyClaude (fork)
+        org.opencontainers.image.description=Personal fork of CoderLuii/HolyClaude with @cloudcli-ai/cloudcli, slim variant only
+        org.opencontainers.image.source=https://github.com/${{ github.repository }}
+        org.opencontainers.image.url=https://github.com/${{ github.repository }}
+        org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
+        org.opencontainers.image.licenses=MIT
+        io.holyclaude.variant=slim
+        io.holyclaude.cloudcli-version=${{ needs.cloudcli-version.outputs.version }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
