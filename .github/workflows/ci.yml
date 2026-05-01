@@ -1,22 +1,19 @@
 # =============================================================================
-# ci — pull-request gate + release trigger
+# 🧪 ci — pull-request gate + release trigger
 # =============================================================================
-# Chain: ci.yml -> release.yml (workflow_run) -> tag push v* -> docker-publish.yml
+# Chain: 🧪 ci -> 🚀 release (workflow_run) -> tag push v* -> 🐳 docker-publish
 #
-# Runs on every PR + on push to master. Validates:
-#   - Dockerfile lints (hadolint)
-#   - Shell scripts lint (shellcheck)
-#   - Image builds for amd64 (no push)
-#   - Smoke test passes inside the freshly built image
-#   - Trivy scan: no new HIGH/CRITICAL CVEs (advisory)
+# Stages:
+#   1. 📝 commitlint        validates conventional-commit messages (gate 1)
+#   2. 🧹 lint              hadolint + shellcheck + yamllint        (gate 2)
+#      🐳 build-and-smoke   amd64 image build + smoke test          (gate 2)
+#   3. ✅ ci-success        single required check for branch protection
 #
-# The `ci-success` aggregator job is the single required status check for
-# branch protection — it succeeds iff every parallel job above succeeded.
 # release.yml uses `workflow_run: ci, conclusion=success` to gate semantic
-# release, so a failing CI on master never publishes.
+# release. A failing gate on master never publishes.
 # =============================================================================
 
-name: ci
+name: 🧪 ci
 
 on:
   pull_request:
@@ -35,14 +32,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint (hadolint + shellcheck + yamllint)
+  # ===========================================================================
+  # 1️⃣ commitlint — gate 1
+  # ===========================================================================
+  # Validates that every commit follows conventional commits. Required for
+  # semantic-release to compute the right version bump downstream.
+  # ===========================================================================
+  commitlint:
+    name: 📝 Commit lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
 
-      - name: Hadolint (Dockerfile)
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 📝 Validate commits
+        uses: fulviofreitas/workflow-arsenal/.github/actions/commitlint@master
+        with:
+          from-sha: ${{ github.event.pull_request.base.sha }}
+          to-sha: ${{ github.event.pull_request.head.sha }}
+
+  # ===========================================================================
+  # 2️⃣ lint — gate 2
+  # ===========================================================================
+  lint:
+    name: 🧹 Lint (hadolint + shellcheck + yamllint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: commitlint
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🐳 Hadolint (Dockerfile)
         uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: Dockerfile
@@ -52,13 +77,13 @@ jobs:
           failure-threshold: error
           ignore: DL3008,DL3013,DL3015,DL3018,DL4006,SC2086,DL3059,DL3025
 
-      - name: Shellcheck
+      - name: 🐚 Shellcheck
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: ./scripts
           severity: warning
 
-      - name: Yamllint (.github)
+      - name: 📋 Yamllint (.github)
         uses: ibiqlik/action-yamllint@v3
         with:
           file_or_dir: .github/
@@ -71,34 +96,38 @@ jobs:
               document-start: disable
               indentation: { spaces: 2, indent-sequences: consistent }
 
+  # ===========================================================================
+  # 2️⃣ build-and-smoke — gate 2 (parallel with lint)
+  # ===========================================================================
   build-and-smoke:
-    name: Build & smoke (${{ matrix.variant }})
+    name: 🐳 Build & smoke (${{ matrix.variant }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    needs: lint
+    needs: commitlint
     strategy:
       fail-fast: false
       matrix:
-        # Only slim is built. The upstream Dockerfile still has the
-        # `ARG VARIANT=full` blocks (Junie/OpenCode/Azure CLI/PDF/video/chart
-        # tooling) and we don't carry a divergence on it — we just stop
-        # building that variant. Re-add `full` here if it ever becomes worth
-        # the build minutes again.
+        # Slim only. The upstream Dockerfile retains its `ARG VARIANT=full`
+        # blocks (Junie/OpenCode/Azure CLI/PDF/video/chart tooling) and we
+        # don't carry a divergence on it — we just stop building that
+        # variant. Re-add `full` here if it ever becomes worth the build
+        # minutes again.
         variant: [slim]
     steps:
-      - uses: actions/checkout@v6
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
 
-      - name: Free disk
+      - name: 💾 Free disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo apt-get clean
           docker system prune -af
           df -h
 
-      - name: Set up Docker Buildx
+      - name: 🛠️ Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build (${{ matrix.variant }}, amd64, no push)
+      - name: 🏗️ Build (${{ matrix.variant }}, amd64, no push)
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -112,10 +141,10 @@ jobs:
             type=gha,scope=master-${{ matrix.variant }}-amd64
           cache-to: type=gha,mode=max,scope=ci-${{ matrix.variant }}
 
-      - name: Smoke test
+      - name: 🧪 Smoke test
         run: ./scripts/ci/smoke-test.sh holyclaude:ci-${{ matrix.variant }}
 
-      - name: Trivy scan (HIGH,CRITICAL vulns — advisory)
+      - name: 🛡️ Trivy scan (HIGH,CRITICAL vulns — advisory)
         if: always()
         uses: aquasecurity/trivy-action@master
         with:
@@ -139,7 +168,7 @@ jobs:
           # straightforward fix path emerges.
           exit-code: "0"
 
-      - name: Upload Trivy SARIF
+      - name: 📤 Upload Trivy SARIF
         if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
@@ -147,35 +176,37 @@ jobs:
           category: trivy-${{ matrix.variant }}
 
   # ===========================================================================
-  # ci-success — single required check for branch protection
+  # 3️⃣ ci-success — single required check for branch protection
   # ===========================================================================
-  # Aggregates the parallel jobs above. release.yml's workflow_run trigger
-  # checks `conclusion: success` on the parent ci run, which is determined by
-  # whether every needed job succeeded — so this aggregator is also what
+  # Aggregates the parallel gates above. release.yml's workflow_run trigger
+  # checks `conclusion: success` on the parent ci run, which is determined
+  # by whether every needed job succeeded — so this aggregator is also what
   # gates the release pipeline.
   # ===========================================================================
   ci-success:
-    name: ci-success
+    name: ✅ ci-success
     runs-on: ubuntu-latest
-    needs: [lint, build-and-smoke]
+    needs: [commitlint, lint, build-and-smoke]
     if: always()
     steps:
-      - name: Verify required jobs passed
+      - name: 🔍 Verify required jobs passed
         run: |
           set -euo pipefail
+          COMMIT="${{ needs.commitlint.result }}"
           LINT="${{ needs.lint.result }}"
           BUILD="${{ needs.build-and-smoke.result }}"
           {
-            echo "## ci-success"
+            echo "## ✅ ci-success"
             echo
-            echo "| Job | Result |"
-            echo "|---|---|"
-            echo "| lint | ${LINT} |"
-            echo "| build-and-smoke | ${BUILD} |"
+            echo "| Stage | Job | Result |"
+            echo "|---|---|---|"
+            echo "| 1️⃣ | 📝 commitlint | ${COMMIT} |"
+            echo "| 2️⃣ | 🧹 lint | ${LINT} |"
+            echo "| 2️⃣ | 🐳 build-and-smoke | ${BUILD} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$LINT" == "success" && "$BUILD" == "success" ]]; then
-            echo "All required checks passed."
+          if [[ "$COMMIT" == "success" && "$LINT" == "success" && "$BUILD" == "success" ]]; then
+            echo "✅ All required checks passed."
             exit 0
           fi
-          echo "::error::ci-success failed (lint=$LINT, build-and-smoke=$BUILD)"
+          echo "::error::ci-success failed (commitlint=$COMMIT, lint=$LINT, build-and-smoke=$BUILD)"
           exit 1

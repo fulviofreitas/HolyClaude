@@ -1,22 +1,22 @@
 # =============================================================================
-# release — semantic-release, gated by CI
+# 🚀 release — semantic-release, gated by ci
 # =============================================================================
-# Chain: ci.yml (success on master) -> release.yml -> tag push v* -> docker-publish.yml
+# Chain: 🧪 ci (success on master) -> 🚀 release -> tag push v* -> 🐳 docker-publish
 #
-# - Triggers: workflow_run after `ci` succeeds on master, plus manual dispatch
-#   with a dry-run toggle.
+# - Triggers: workflow_run after `🧪 ci` succeeds on master, plus manual
+#   dispatch with a dry-run toggle.
 # - Uses GitHub App token so the pushed tag is authored by an identity that
 #   can trigger downstream workflows (GITHUB_TOKEN tag pushes do not).
 # - .releaserc.json deliberately omits @semantic-release/git: there is no
 #   CHANGELOG commit back to master, so no skip-ci loop, no chore(release)
-#   re-run of CI. Release notes live on the GitHub Releases page.
+#   re-run of ci. Release notes live on the GitHub Releases page.
 # =============================================================================
 
-name: release
+name: 🚀 release
 
 on:
   workflow_run:
-    workflows: ["ci"]
+    workflows: ["🧪 ci"]
     types: [completed]
     branches: [master]
   workflow_dispatch:
@@ -41,7 +41,7 @@ permissions:
 
 jobs:
   release:
-    name: semantic-release
+    name: 🚀 semantic-release
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -50,14 +50,14 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
 
     steps:
-      - name: Generate GitHub App token
+      - name: 🔑 Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
 
-      - name: Checkout master
+      - name: 📥 Checkout master
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -65,7 +65,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           ref: master
 
-      - name: Run semantic-release
+      - name: 🚀 Run semantic-release
         uses: fulviofreitas/workflow-arsenal/.github/actions/semantic-release@master
         with:
           github-token: ${{ steps.app-token.outputs.token }}
