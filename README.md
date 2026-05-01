@@ -36,8 +36,7 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 > [`CoderLuii/HolyClaude`](https://github.com/CoderLuii/HolyClaude). It
 > exists to keep the bundled CloudCLI (`@cloudcli-ai/cloudcli`, the renamed
 > continuation of `@siteboon/claude-code-ui`) on a faster cadence than
-> upstream and to deploy the resulting image to a private Kubernetes
-> cluster.
+> upstream.
 >
 > - **Image**: `ghcr.io/fulviofreitas/holyclaude` — slim variant only. The
 >   upstream `full` variant (Junie/OpenCode/Azure CLI/PDF/video) is too
@@ -68,17 +67,11 @@ One command. Full AI development workstation. Claude Code, web UI, headless brow
 >   `npm view @cloudcli-ai/cloudcli version` daily; on advance it
 >   `npm pack`s the new tarball into `vendor/artifacts/`, rewrites the
 >   Dockerfile, and opens a PR labeled `cloudcli-sync`. Merge → ci →
->   release → docker-publish → Renovate in `fulviofreitas/ff-k8s` picks
->   up the new tag → ArgoCD reconciles.
+>   release → docker-publish.
 > - **Update flow — HolyClaude-driven:** identical pipeline, but the
 >   trigger is [`upstream-sync.yml`](.github/workflows/upstream-sync.yml),
 >   which detects new commits/tags on `CoderLuii/HolyClaude` and opens a
 >   PR labeled `upstream-sync`.
-> - **Rollback:** the cluster pins an immutable tag, not `latest`. To roll
->   back, edit `k8s-homelab/kubernetes/apps/holyclaude/deployment.yaml`
->   in `fulviofreitas/ff-k8s` and set `image:` to a previous tag from
->   [GHCR](https://github.com/fulviofreitas/HolyClaude/pkgs/container/holyclaude).
->   ArgoCD reconciles within minutes.
 > - **Divergence policy:** see [`docs/fork/DIVERGENCE.md`](docs/fork/DIVERGENCE.md)
 >   for the per-path ownership table and the patch-rot canary.
 

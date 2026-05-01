@@ -1,8 +1,0 @@
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: holyclaude
-  labels:
-    app.kubernetes.io/name: holyclaude
-    app.kubernetes.io/part-of: k8s-homelab
