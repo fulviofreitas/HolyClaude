@@ -74,13 +74,15 @@ jobs:
       push: true
       build-args: |
         VARIANT=slim
+      labels: |
+        org.opencontainers.image.title=HolyClaude (fork)
+        org.opencontainers.image.description=Personal fork of CoderLuii/HolyClaude with @cloudcli-ai/cloudcli, slim variant only
+        org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
+        io.holyclaude.variant=slim
+        io.holyclaude.cloudcli-version=${{ needs.cloudcli-version.outputs.version }}
       annotations: |
         org.opencontainers.image.title=HolyClaude (fork)
         org.opencontainers.image.description=Personal fork of CoderLuii/HolyClaude with @cloudcli-ai/cloudcli, slim variant only
-        org.opencontainers.image.source=https://github.com/${{ github.repository }}
-        org.opencontainers.image.url=https://github.com/${{ github.repository }}
-        org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
-        org.opencontainers.image.licenses=MIT
         io.holyclaude.variant=slim
         io.holyclaude.cloudcli-version=${{ needs.cloudcli-version.outputs.version }}
     secrets:
