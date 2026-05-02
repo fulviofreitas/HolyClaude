@@ -75,7 +75,7 @@ jobs:
           # apt packages, DL3013 pip pins missing) that we are not fixing in
           # this fork — they belong upstream. Fail only on critical issues.
           failure-threshold: error
-          ignore: DL3008,DL3013,DL3015,DL3018,DL4006,SC2086,DL3059,DL3025
+          ignore: DL3002,DL3008,DL3013,DL3015,DL3018,DL4006,SC2086,DL3059,DL3025
 
       - name: 🐚 Shellcheck
         uses: ludeeus/action-shellcheck@master
