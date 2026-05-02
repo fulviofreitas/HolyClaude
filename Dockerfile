@@ -272,8 +272,5 @@ WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -sf http://localhost:3001/ || exit 1
 
-# ---------- Drop back to non-root (DL3002) ----------
-USER claude
-
 # ---------- s6-overlay as PID 1 ----------
-ENTRYPOINT ["sudo", "/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
