@@ -7,7 +7,7 @@
 #   docker build --build-arg VARIANT=slim -t holyclaude:slim .
 # ==============================================================================
 
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 LABEL org.opencontainers.image.source=https://github.com/CoderLuii/HolyClaude
 
@@ -92,7 +92,7 @@ RUN ln -sf /usr/bin/batcat /usr/local/bin/bat 2>/dev/null || true
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 
 # ---------- Create claude user ----------
-# node:22-bookworm-slim already has UID 1000 as 'node' — rename it to 'claude'
+# node:24-bookworm-slim already has UID 1000 as 'node' — rename it to 'claude'
 RUN usermod -l claude -d /home/claude -m node && \
     groupmod -n claude node && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
@@ -233,9 +233,11 @@ RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/asse
 USER claude
 RUN mkdir -p /home/claude/.claude-code-ui/plugins && \
     git clone --depth 1 https://github.com/cloudcli-ai/cloudcli-plugin-starter.git /home/claude/.claude-code-ui/plugins/project-stats && \
-    cd /home/claude/.claude-code-ui/plugins/project-stats && npm install && npm run build && \
+    npm --prefix /home/claude/.claude-code-ui/plugins/project-stats install && \
+    npm --prefix /home/claude/.claude-code-ui/plugins/project-stats run build && \
     git clone --depth 1 https://github.com/cloudcli-ai/cloudcli-plugin-terminal.git /home/claude/.claude-code-ui/plugins/web-terminal && \
-    cd /home/claude/.claude-code-ui/plugins/web-terminal && npm install && npm run build && \
+    npm --prefix /home/claude/.claude-code-ui/plugins/web-terminal install && \
+    npm --prefix /home/claude/.claude-code-ui/plugins/web-terminal run build && \
     echo '{"project-stats":{"name":"project-stats","source":"https://github.com/cloudcli-ai/cloudcli-plugin-starter","enabled":true},"web-terminal":{"name":"web-terminal","source":"https://github.com/cloudcli-ai/cloudcli-plugin-terminal","enabled":true}}' > /home/claude/.claude-code-ui/plugins.json
 USER root
 
@@ -270,5 +272,8 @@ WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -sf http://localhost:3001/ || exit 1
 
+# ---------- Drop back to non-root (DL3002) ----------
+USER claude
+
 # ---------- s6-overlay as PID 1 ----------
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["sudo", "/usr/local/bin/entrypoint.sh"]
