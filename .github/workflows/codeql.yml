@@ -1,0 +1,69 @@
+# =============================================================================
+# 🛡️ codeql — SAST coverage for first-party source
+# =============================================================================
+# Static analysis via GitHub's CodeQL. Scope is intentionally narrow:
+#
+#   - python: scripts/notify.py (the only first-party Python in-tree).
+#
+# Languages NOT scanned and why:
+#   - shell: CodeQL has no built-in shell analyzer; ci.yml's shellcheck step
+#     already covers scripts/.
+#   - javascript/typescript: no first-party JS/TS source lives in the repo.
+#     The npm globals (cloudcli, claude-code, codex, gemini, etc.) are baked
+#     into the Docker image only — Trivy already scans that surface.
+#
+# Findings flow to the Security tab via SARIF upload. This workflow is
+# advisory-only for now (no required-check wiring); branch-protection
+# integration is deferred until the alert backlog is drained per
+# docs/security/code-scanning-remediation-plan.md (Phase 3).
+# =============================================================================
+
+name: 🛡️ codeql
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  schedule:
+    # Weekly Monday 06:00 UTC — staggered from renovate's 6h cadence.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # 🔍 analyze — CodeQL init + analyze for python
+  # ===========================================================================
+  # Pinned to v4 to match ci.yml's github/codeql-action/upload-sarif version.
+  # ===========================================================================
+  analyze:
+    name: 🔍 Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🧰 Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: 🔍 Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
