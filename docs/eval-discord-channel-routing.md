@@ -559,7 +559,11 @@ All workspaces run in `bypassPermissions` mode (matching HolyClaude). Security i
 
 > **This is a plan, not execution. No changes have been made.**
 
-#### Step 1: Discord Setup (~10 minutes)
+Each step is annotated with the **agent** that should execute it. Work that can run in parallel is marked accordingly.
+
+#### Step 1: Discord Setup — `manual` (~10 minutes)
+
+Manual steps in the Discord Developer Portal and Discord client. No agent needed.
 
 1. Create a Discord Application at discord.com/developers
 2. Create a Bot. Copy the token.
@@ -569,7 +573,11 @@ All workspaces run in `bypassPermissions` mode (matching HolyClaude). Security i
 6. Create `CLAUDE CODE WORKSPACES` category and `cc-` prefixed channels per §5.1.
 7. Lock category permissions to `@Bot Admin` + `@Claude Bot`.
 
-#### Step 2: Build Container Image (~2 hours)
+#### Step 2: Build Container Image — `docker-expert` (~2 hours)
+
+> **Agent:** `docker-expert` — Dockerfile authoring, multi-stage build optimization, GHCR push pipeline.
+
+Write a production Dockerfile for cc-connect:
 
 ```dockerfile
 # Shape only — not execution
@@ -581,16 +589,32 @@ ENV HOME=/home/claude
 CMD ["cc-connect", "--config", "/etc/cc-connect/config.toml"]
 ```
 
-Push to `ghcr.io/<org>/cc-connect:latest`.
+Deliverables:
+- Multi-stage `Dockerfile` with minimal final image (Go binary preferred over npm for smaller footprint)
+- `.dockerignore`
+- Push to `ghcr.io/<org>/cc-connect:latest`
 
-#### Step 3: Create K8s Manifests (~1 hour)
+#### Step 3: CI/CD Pipeline — `devops-engineer` (~1 hour)
+
+> **Agent:** `devops-engineer` — GitHub Actions workflow for automated image builds and pushes.
+
+Deliverables:
+- `.github/workflows/cc-connect-build.yml` — build and push container image on tag/release
+- Optional: Renovate config to track cc-connect upstream releases
+- Integrate with existing release patterns (semantic-release, conventional commits)
+
+> **Steps 2 and 3 can run in parallel.**
+
+#### Step 4: Create K8s Manifests — `k8s-homelab` (~1 hour)
+
+> **Agent:** `k8s-homelab` — Kubernetes manifests, Kustomize, ArgoCD integration, NFS PV/PVC provisioning.
 
 Under `/workspace/projects/ff-k8s/k8s-homelab/kubernetes/apps/cc-connect/`:
 
 ```
 cc-connect/
 ├── kustomization.yaml
-├── namespace.yaml           # cc-connect namespace
+├── namespace.yaml           # cc-connect namespace (privileged PSS if needed)
 ├── deployment.yaml          # Pod spec with NFS mounts
 ├── configmap.yaml           # config.toml
 ├── persistentvolumes.yaml   # PVs for workspace + home + data
@@ -600,27 +624,54 @@ cc-connect/
 ```
 
 PVs point to existing NFS exports:
-- `nfs-cc-connect-workspace` → `10.0.4.11:/tank/k8s/code-server` (same as HolyClaude)
-- `nfs-cc-connect-home` → `10.0.4.11:/tank/k8s/holyclaude` (same as HolyClaude/agno)
-- `nfs-cc-connect-data` → `10.0.4.11:/tank/k8s/cc-connect` (new small NFS export for JSON)
+- `nfs-cc-connect-workspace` → `10.0.4.11:/tank/k8s/code-server` (ReadWriteMany — same export as HolyClaude)
+- `nfs-cc-connect-home` → `10.0.4.11:/tank/k8s/holyclaude` (ReadWriteMany — same export as HolyClaude/agno)
+- `nfs-cc-connect-data` → `10.0.4.11:/tank/k8s/cc-connect` (new export — small, for JSON session files)
 
-#### Step 4: Create `config.toml` (~30 minutes)
+Reference patterns:
+- Deployment: mirror `kubernetes/apps/holyclaude/deployment.yaml` (Recreate strategy, NFS mounts, hostAliases)
+- PVs: mirror `kubernetes/core/nfs-storage/persistentvolumes.yaml` (nfsvers=4.2, hard, intr)
+- Namespace: mirror `kubernetes/config/namespaces/namespaces.yaml`
 
-Single `multi-workspace` project block with `base_dir = "/workspace/projects"`, `mode = "bypassPermissions"`, `thread_isolation = true`. Per-channel `/workspace bind` at runtime maps `cc-` prefixed channels to directories.
+#### Step 5: SOPS-Encrypt Discord Token — `k8s-homelab` (~15 minutes)
 
-#### Step 5: Ensure Denylist Coverage (~15 minutes)
+> **Agent:** `k8s-homelab` — SOPS encryption with age key, secret manifest creation.
+
+Encrypt the Discord bot token using the existing age key at `/root/temp/ff-k8s/k8s-homelab/.age/keys.txt`. Create a SOPS-encrypted Kubernetes Secret in `kubernetes/apps/cc-connect/secrets/discord-token.yaml`. Follow the same pattern as `kubernetes/apps/holyclaude/secrets/`.
+
+#### Step 6: Create NFS Export — `k8s-homelab` (~10 minutes)
+
+> **Agent:** `k8s-homelab` — NFS export creation on prox0 ZFS.
+
+Create `/tank/k8s/cc-connect` on `10.0.4.11` (prox0.local) for cc-connect's JSON session data (`sessions.json`, `workspace_bindings.json`). Small dataset — 1Gi PV is sufficient. Add to NFS exports and create corresponding PV/PVC.
+
+> **Steps 4, 5, and 6 can run in parallel.**
+
+#### Step 7: Create `config.toml` — `k8s-homelab` (~30 minutes)
+
+> **Agent:** `k8s-homelab` — ConfigMap creation with cc-connect configuration.
+
+Single `multi-workspace` project block with `base_dir = "/workspace/projects"`, `mode = "bypassPermissions"`, `thread_isolation = true`. Stored as a ConfigMap, mounted at `/etc/cc-connect/config.toml`.
+
+The `config.toml` references the SOPS-decrypted Discord token via `token_env = "DISCORD_TOKEN"` (injected from the Secret as an env var in the Deployment).
+
+#### Step 8: Ensure Denylist Coverage — `k8s-homelab` (~15 minutes)
+
+> **Agent:** `k8s-homelab` — verify NFS content, validate settings.json on shared volume.
 
 The global `~/.claude/settings.json` on the NFS home volume already contains the 47-item denylist (shared with HolyClaude). Verify it's present — cc-connect's Claude subprocesses inherit it via the same `$HOME/.claude/` path.
 
 For workspaces that need additional restrictions beyond the global denylist, add a `.claude/settings.local.json` in that project directory. Workspaces that already have one (e.g., `HolyClaude`, `ff-k8s`) keep their existing settings.
 
-#### Step 6: Deploy via ArgoCD
+#### Step 9: Deploy via ArgoCD — `k8s-homelab`
+
+> **Agent:** `k8s-homelab` — ArgoCD application registration and sync.
 
 Add `cc-connect` to the app-of-apps ApplicationSet. ArgoCD syncs the manifests, creates the namespace, deploys the pod.
 
-#### Step 7: Bind Channels (~5 minutes)
+#### Step 10: Bind Channels — `manual` (~5 minutes)
 
-Because channels use the `cc-` prefix, the auto-convention (`channel name = directory name`) won't match. Run `/workspace bind` in each channel to create the explicit mapping:
+Manual steps in Discord. Run `/workspace bind` in each channel to map `cc-` prefixed names to actual directories:
 
 ```
 /workspace bind whatsapp_downloader       (in #cc-whatsapp-vault)
@@ -646,24 +697,51 @@ Because channels use the `cc-` prefix, the auto-convention (`channel name = dire
 
 Bindings persist in `workspace_bindings.json` — this is a one-time setup per channel.
 
-#### Step 8: Verify & Snapshot
+#### Step 11: Verify & Snapshot — `k8s-homelab`
+
+> **Agent:** `k8s-homelab` — pod health verification, ZFS snapshot.
 
 1. Send a test message in each channel → verify thread creation and response
 2. Create a Proxmox ZFS snapshot of the NFS dataset on prox0
 3. Commit all k8s manifests to the ff-k8s repo
 
-### 7.3 What Would Need to Be Built / Forked
+### 7.3 Agent Delegation Summary
 
-| Gap | Effort | Approach |
+| Step | Agent | Can Parallelize With |
 |---|---|---|
-| **Container image** | ~2 hours | Build custom image with cc-connect (Go binary or npm) + Claude Code CLI. Push to GHCR |
-| **K8s manifests** | ~1 hour | Deployment, ConfigMap, PVs/PVCs, SOPS Secret. Follow HolyClaude pattern exactly |
-| **NFS export** | ~10 min | Create `/tank/k8s/cc-connect` on prox0 for cc-connect's JSON session data |
-| **Per-workspace denylist** | ~15 min | Verify global denylist on NFS home. For workspaces without `.claude/settings.local.json`, the global fallback applies. No new files needed if global denylist is sufficient |
-| **Worktree isolation** (optional) | ~30 min | Inject system prompt via `config.toml` that instructs Claude to create `git worktree` before editing. Not a code change — config only |
-| **Health check / monitoring** | Nice-to-have | cc-connect has an embedded web admin UI — expose as ClusterIP service for internal monitoring |
+| 1. Discord Setup | `manual` | — |
+| 2. Container Image | `docker-expert` | Step 3 |
+| 3. CI/CD Pipeline | `devops-engineer` | Step 2 |
+| 4. K8s Manifests | `k8s-homelab` | Steps 5, 6 |
+| 5. SOPS Encryption | `k8s-homelab` | Steps 4, 6 |
+| 6. NFS Export | `k8s-homelab` | Steps 4, 5 |
+| 7. config.toml | `k8s-homelab` | — (depends on 4) |
+| 8. Denylist Verification | `k8s-homelab` | Step 7 |
+| 9. ArgoCD Deploy | `k8s-homelab` | — (depends on 2, 4, 5, 6, 7) |
+| 10. Bind Channels | `manual` | — (depends on 9) |
+| 11. Verify & Snapshot | `k8s-homelab` | — (depends on 10) |
 
-**No forking required.** cc-connect is configured entirely via `config.toml`. The only custom artifact is the container image.
+**Parallelism lanes:**
+- **Lane A (build):** Steps 2 + 3 run concurrently (`docker-expert` + `devops-engineer`)
+- **Lane B (infra):** Steps 4 + 5 + 6 run concurrently (all `k8s-homelab`)
+- **Lane C (config):** Steps 7 + 8 after Lane B completes
+- **Lane D (deploy):** Step 9 after Lanes A + C complete
+- **Lane E (manual):** Steps 10 + 11 sequentially after deploy
+
+### 7.4 What Would Need to Be Built / Forked
+
+| Gap | Effort | Agent |
+|---|---|---|
+| **Container image** | ~2 hours | `docker-expert` — Dockerfile, multi-stage build, GHCR push |
+| **CI/CD pipeline** | ~1 hour | `devops-engineer` — GitHub Actions workflow for image builds |
+| **K8s manifests** | ~1 hour | `k8s-homelab` — Deployment, ConfigMap, PVs/PVCs, SOPS Secret, ArgoCD app |
+| **NFS export** | ~10 min | `k8s-homelab` — Create ZFS dataset + NFS export on prox0 |
+| **Per-workspace denylist** | ~15 min | `k8s-homelab` — Verify global denylist on NFS. No new files needed if global denylist is sufficient |
+| **config.toml** | ~30 min | `k8s-homelab` — ConfigMap with multi-workspace, bypassPermissions, thread_isolation config |
+| **Worktree isolation** (optional) | ~30 min | `k8s-homelab` — Inject system prompt via `config.toml`. Config only, no code change |
+| **Health check / monitoring** | Nice-to-have | `k8s-homelab` — Expose cc-connect's embedded web admin UI as ClusterIP service |
+
+**No forking required.** cc-connect is configured entirely via `config.toml`. The only custom artifacts are the container image and CI pipeline.
 
 ---
 
