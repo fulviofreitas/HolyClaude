@@ -166,6 +166,17 @@ jobs:
           # ecosystem's vuln-of-the-week. The SARIF still uploads to the
           # Security tab so we keep visibility; gate later if a
           # straightforward fix path emerges.
+          # TODO(security): flip exit-code to "1" (blocking) once the
+          # prerequisites in docs/security/code-scanning-remediation-plan.md
+          # land. Specifically:
+          #   - Phase 1 (imagemagick, ~40 alerts) is merged
+          #   - Phase 2 (npm transitives, ~16 alerts) is merged
+          #   - Open HIGH/CRITICAL alert count for the trivy-slim category
+          #     in the Security tab is below the threshold defined in the
+          #     plan's "Phase 3 — gate flip" section
+          # When flipping, also remove this entire advisory comment block
+          # and update the step name to drop "advisory". Severity stays
+          # HIGH,CRITICAL (LOW/MEDIUM noise is not worth gating on).
           exit-code: "0"
 
       - name: 📤 Upload Trivy SARIF
