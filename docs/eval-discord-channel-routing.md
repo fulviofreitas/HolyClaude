@@ -97,7 +97,7 @@ cc-connect is the clear winner after re-evaluation:
 | Per-thread sessions | **Yes.** `thread_isolation = true` in Discord platform config. Session key switches from `discord:{channelID}:{userID}` to `discord:{threadID}`. Each thread = independent Claude Code subprocess with `--resume` support. Multiple threads per channel run concurrently |
 | Auth | **Subscription supported.** Inherits credentials from `claude` CLI (`~/.claude/.credentials.json` from `claude login`). Also supports API key (`ANTHROPIC_API_KEY`), Bedrock, Vertex, custom providers. Multiple `[[providers]]` configurable with runtime switching (`/provider switch`) |
 | Session persistence | **JSON files via atomic writes.** `~/.cc-connect/sessions.json` stores session maps, workspace bindings. Claude sessions resumed via `--resume <sessionID>` on restart. **No SQLite — NFS-safe** |
-| Permission handling | `--permission-mode` flag with 6 modes: `default` (manual approval), `acceptEdits`, `plan`, `auto`, `bypassPermissions`/`yolo`, `dontAsk`. Interactive approval surfaced in Discord. Pre-approved/disallowed tool lists in config. Optional `run_as_user` for OS-user isolation |
+| Permission handling | `--permission-mode` flag with 6 modes: `default` (manual approval), `acceptEdits`, `plan`, `auto`, `bypassPermissions`/`yolo`, `dontAsk`. Interactive approval surfaced in Discord. Pre-approved/disallowed tool lists in config. Optional `run_as_user` for OS-user isolation. **For our setup:** use `bypassPermissions` to match HolyClaude's `Bash(*)` allowlist model — the per-workspace `.claude/settings.local.json` denylist still applies as a safety net |
 | RBAC | `allow_from = "userID1,userID2"` or `"*"` per project. Per-project isolation |
 | Queue | In-memory, max 5 per session. `MsgQueueFull` notification when full. Lost on restart |
 | Stop / control | Slash commands for session management: `/new`, `/switch`, `/list`, `/stop`, `/mode`, `/dir`, `/provider switch` |
@@ -208,7 +208,7 @@ cc-connect is the clear winner after re-evaluation:
 | **Per-thread session isolation** | `thread_isolation = true` keys sessions by `discord:{threadID}`. Each thread gets its own Claude Code subprocess with independent context. Multiple threads run concurrently. Parent channel ID used for workspace binding (threads share the project directory) | ✅ Confirmed |
 | **Independent CLAUDE.md per workspace** | Claude Code scopes CLAUDE.md per project directory. cc-connect spawns `claude` with `work_dir` set to the bound directory, so each workspace reads its own CLAUDE.md and `.claude/` | ✅ Confirmed (inherits from Claude Code) |
 | **Independent .claude/ per workspace** | Same mechanism — `.claude/settings.local.json` in each project directory is respected because the subprocess starts in that directory | ✅ Confirmed |
-| **Independent tool permissions per workspace** | Per-project `allowed_tools` and `disallowed_tools` in `config.toml`. Plus per-directory `.claude/settings.local.json`. Plus per-project `mode` (permission mode). Triple-layered | ✅ Confirmed |
+| **Independent tool permissions per workspace** | cc-connect sets `bypassPermissions` globally (matching HolyClaude). Per-directory `.claude/settings.local.json` denylist still enforced by Claude Code itself — destructive commands blocked regardless of permission mode. Each workspace can have its own allowlist/denylist | ✅ Confirmed |
 | **Sender allowlist / RBAC** | `allow_from = "userID1,userID2"` per project. Different projects can have different allowlists | ✅ Confirmed (per-project granularity) |
 | **Behavior on restart** | Sessions resume from JSON via `--resume <sessionID>`. Workspace bindings persist. In-memory queue (5 items) lost. Active turn state lost | ⚠️ Queue lost, sessions survive |
 | **Filesystem safety on NFS** | No SQLite. JSON files with atomic writes (`AtomicWriteFile()`). NFS-safe | ✅ Confirmed |
@@ -406,7 +406,7 @@ base_dir = "/workspace/projects"
 type = "claudecode"
 
 [projects.agent.options]
-mode = "acceptEdits"  # default permission mode
+mode = "bypassPermissions"  # full permissions — matches HolyClaude's Bash(*) allowlist
 
 [[projects.platforms]]
 type = "discord"
@@ -419,52 +419,66 @@ progress_style = "card"
 
 With this config and `cc-` prefixed channel names, the auto-convention won't match directories directly (there's no `/workspace/projects/cc-openclaw`). Use `/workspace bind` in each channel to create the explicit mapping — e.g., `/workspace bind openclaw` in `#cc-openclaw`. Bindings persist in `workspace_bindings.json` across restarts.
 
-Alternatively, for per-project permission granularity, define explicit `[[projects]]` blocks:
+#### Permission Model: Full Permissions with Denylist Safety Net
 
-```toml
-# Infrastructure — manual approval
-[[projects]]
-name = "ff-k8s"
-work_dir = "/workspace/projects/ff-k8s"
-[projects.agent]
-type = "claudecode"
-[projects.agent.options]
-mode = "default"  # manual approval for all tools
-allowed_tools = ["Read", "Grep", "Glob"]
+cc-connect's `mode = "bypassPermissions"` passes `--permission-mode bypassPermissions` to the Claude CLI, matching HolyClaude's current setup where `Bash(*)` is in the global allowlist. This means **no interactive approval prompts** in Discord — Claude executes all tools autonomously.
 
-# Application code — acceptEdits
-[[projects]]
-name = "openclaw"
-work_dir = "/workspace/projects/openclaw"
-[projects.agent]
-type = "claudecode"
-[projects.agent.options]
-mode = "acceptEdits"
+**This is safe because the denylist still applies.** Claude Code's permission system is layered:
+
+1. **cc-connect layer:** `bypassPermissions` → auto-approve all tool calls
+2. **Claude Code layer:** per-workspace `.claude/settings.local.json` → allowlist and denylist still enforced
+
+Each workspace can have its own `.claude/settings.local.json` with the same 47-item denylist currently used by HolyClaude (blocking `rm -rf /`, `shutdown`, `mkfs`, `iptables`, `passwd`, etc.). The denylist is evaluated **after** the permission mode, so even in `bypassPermissions` mode, denied commands are rejected.
+
+**To replicate HolyClaude's exact permission model per workspace**, place a `.claude/settings.local.json` in each project directory:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)", "Edit", "Write(*)", "Read(*)", "WebFetch(*)", "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(rm -rf ~)",
+      "Bash(shutdown *)", "Bash(reboot *)", "Bash(poweroff *)",
+      "Bash(mkfs *)", "Bash(dd if=*)", "Bash(wipefs *)",
+      "Bash(iptables -F *)", "Bash(passwd *)", "Bash(userdel *)",
+      "Bash(systemctl disable *)", "Bash(systemctl mask *)",
+      "Bash(kill -9 -1 *)", "Bash(killall *)"
+    ]
+  }
+}
 ```
+
+(Full 47-item denylist from HolyClaude's config — abbreviated above for readability. Copy from `/workspace/projects/HolyClaude/.claude/settings.local.json`.)
+
+Workspaces that already have a `.claude/settings.local.json` (e.g., `HolyClaude` itself, `ff-k8s`) inherit their existing permissions automatically. For workspaces without one, the global `~/.claude/settings.json` (on the shared NFS home volume) provides the fallback denylist.
 
 **Verified directories on `/workspace/projects/` that should get channels:**
 
-| Channel | `/workspace bind` arg | Directory | Permission Mode |
-|---|---|---|---|
-| `#cc-whatsapp-vault` | `whatsapp_downloader` | `whatsapp_downloader` | `acceptEdits` |
-| `#cc-openclaw` | `openclaw` | `openclaw` | `acceptEdits` |
-| `#cc-calbridge` | `calbridge` | `calbridge` | `acceptEdits` |
-| `#cc-ff-k8s` | `ff-k8s` | `ff-k8s` | `default` (manual — infra) |
-| `#cc-holyclaude` | `HolyClaude` | `HolyClaude` | `default` (manual — self-modifying) |
-| `#cc-eero-ui` | `eero-ui` | `eero-ui` | `acceptEdits` |
-| `#cc-eero-api` | `eero-api` | `eero-api` | `acceptEdits` |
-| `#cc-eeroctl` | `eeroctl` | `eeroctl` | `acceptEdits` |
-| `#cc-eero-prometheus` | `eero-prometheus-exporter` | `eero-prometheus-exporter` | `acceptEdits` |
-| `#cc-bambuddy-cloud` | `bambuddy_cloud` | `bambuddy_cloud` | `acceptEdits` |
-| `#cc-notion-automations` | `notion-automations` | `notion-automations` | `acceptEdits` |
-| `#cc-unbound` | `unbound` | `unbound` | `default` (manual — DNS) |
-| `#cc-workflow-arsenal` | `workflow-arsenal` | `workflow-arsenal` | `acceptEdits` |
-| `#cc-dns-zones` | `dns-zones` | `dns-zones` | `default` (manual — DNS) |
-| `#cc-prox-cluster` | `prox-cluster` | `prox-cluster` | `default` (manual — infra) |
-| `#cc-prox-new` | `prox-new` | `prox-new` | `default` (manual — infra) |
-| `#cc-cloudcli-ccusage` | `cloudcli-plugin-ccusage` | `cloudcli-plugin-ccusage` | `acceptEdits` |
-| `#cc-ff-net` | `ff-net` | `ff-net` | `default` (manual — networking) |
-| `#cc-tfstates-ui` | `tfstates-ui` | `tfstates-ui` | `acceptEdits` |
+All workspaces run `bypassPermissions` (full permissions). Per-workspace denylist safety comes from `.claude/settings.local.json` in each project directory.
+
+| Channel | `/workspace bind` arg | Directory |
+|---|---|---|
+| `#cc-whatsapp-vault` | `whatsapp_downloader` | `whatsapp_downloader` |
+| `#cc-openclaw` | `openclaw` | `openclaw` |
+| `#cc-calbridge` | `calbridge` | `calbridge` |
+| `#cc-ff-k8s` | `ff-k8s` | `ff-k8s` |
+| `#cc-holyclaude` | `HolyClaude` | `HolyClaude` |
+| `#cc-eero-ui` | `eero-ui` | `eero-ui` |
+| `#cc-eero-api` | `eero-api` | `eero-api` |
+| `#cc-eeroctl` | `eeroctl` | `eeroctl` |
+| `#cc-eero-prometheus` | `eero-prometheus-exporter` | `eero-prometheus-exporter` |
+| `#cc-bambuddy-cloud` | `bambuddy_cloud` | `bambuddy_cloud` |
+| `#cc-notion-automations` | `notion-automations` | `notion-automations` |
+| `#cc-unbound` | `unbound` | `unbound` |
+| `#cc-workflow-arsenal` | `workflow-arsenal` | `workflow-arsenal` |
+| `#cc-dns-zones` | `dns-zones` | `dns-zones` |
+| `#cc-prox-cluster` | `prox-cluster` | `prox-cluster` |
+| `#cc-prox-new` | `prox-new` | `prox-new` |
+| `#cc-cloudcli-ccusage` | `cloudcli-plugin-ccusage` | `cloudcli-plugin-ccusage` |
+| `#cc-ff-net` | `ff-net` | `ff-net` |
+| `#cc-tfstates-ui` | `tfstates-ui` | `tfstates-ui` |
 
 **Excluded:** `calbridge-fix`, `eero-*-context`, `codeserver`, `fix-mcp`, `freitasnas`, `mediaserver`, `migrate-perc-unraid-to-prox`, `plex`, `prox-updates-fix`, `teslamate`, `tigra-store`, `awesome-claude-code-subagents`, `docker01`
 
@@ -490,7 +504,7 @@ For explicit `@<user>` pings on task completion, cc-connect's message templates 
 | Risk | Severity | Mitigation |
 |---|---|---|
 | **No git worktree isolation for concurrent threads** | Medium | Two threads in the same channel both write to the same `work_dir`. If both edit the same file simultaneously, conflicts occur. Mitigation: (1) document the risk, (2) consider injecting a system prompt that mandates `git worktree` creation (cc-connect supports `--system-prompt`), (3) for infra workspaces, use `default` permission mode so file writes require manual approval |
-| **Permission prompts block sessions** | High | Use per-project `mode` settings. Infrastructure channels: `default` (manual approval). App channels: `acceptEdits`. **Never use `bypassPermissions`/`yolo` for infrastructure workspaces** |
+| **Full permissions (`bypassPermissions`) across all workspaces** | Medium | Matches HolyClaude's current `Bash(*)` model. Safety net: per-workspace `.claude/settings.local.json` denylist blocks destructive commands (`rm -rf /`, `shutdown`, `mkfs`, `iptables`, etc.) even in bypass mode. Ensure every workspace has a denylist — either local or inherited from the global `~/.claude/settings.json` on NFS |
 | **Single bot process = SPOF** | Medium | K8s pod restart policy handles crashes. JSON sessions survive restart. Queue (5 items) lost. Go goroutine isolation means one crashed session doesn't take down others |
 | **Concurrent workspace access with HolyClaude** | Medium | The cc-connect pod and HolyClaude pod share the same NFS workspace. If both write to the same files simultaneously, conflicts can occur. Git's own conflict detection helps. In practice, you'll be using one or the other per project at any given time |
 | **Discord Message Content Intent** | Low | Must be enabled in Discord Developer Portal → Bot → Privileged Gateway Intents. One-time setup |
@@ -499,13 +513,18 @@ For explicit `@<user>` pings on task completion, cc-connect's message templates 
 | **Subscription dependency** | Low | If Pro/Max subscription lapses, all sessions stop. Keep subscription active |
 | **`CLAUDECODE` env var conflict** | Low | If cc-connect runs inside a Claude Code session, must `unset CLAUDECODE`. In k8s pod, this won't be set — not an issue |
 
-### Security Trade-offs Per Workspace
+### Security Model: Full Permissions with Denylist
 
-| Workspace Category | Permission Mode | Channels | Justification |
-|---|---|---|---|
-| **Infrastructure** | `default` (manual approval for everything) | `#cc-ff-k8s`, `#cc-prox-cluster`, `#cc-prox-new`, `#cc-dns-zones`, `#cc-unbound`, `#cc-ff-net` | Destructive potential: Terraform apply, DNS changes, Proxmox config. Every tool call must be approved |
-| **Self-modifying** | `default` | `#cc-holyclaude` | Changes to this project could affect the bot itself |
-| **Application code** | `acceptEdits` | All others | File edits auto-approved, shell commands still require confirmation. Lower blast radius |
+All workspaces run in `bypassPermissions` mode (matching HolyClaude). Security is enforced by the Claude Code denylist layer, not by interactive approval:
+
+| Layer | What it does | Where it lives |
+|---|---|---|
+| **cc-connect** | `mode = "bypassPermissions"` → auto-approve all tool calls, no Discord prompts | `config.toml` |
+| **Claude Code global** | Fallback denylist (47 destructive commands blocked) | `~/.claude/settings.json` on NFS |
+| **Claude Code per-workspace** | Per-project overrides (additional allows/denies) | `<project>/.claude/settings.local.json` |
+| **Discord RBAC** | Only allowlisted Discord user IDs can send messages | `allow_from` in `config.toml` |
+
+**Why this is acceptable:** HolyClaude already operates this way. The `Bash(*)` allowlist with the 47-item denylist has been the production model. cc-connect simply extends the same model to Discord-initiated sessions. The denylist prevents `rm -rf /`, `shutdown`, `mkfs`, `iptables`, `passwd`, and other destructive operations regardless of permission mode.
 
 ### Limitations to Accept
 
@@ -528,7 +547,7 @@ For explicit `@<user>` pings on task completion, cc-connect's message templates 
 - ✅ Subscription auth (inherits Claude CLI OAuth — zero per-token cost)
 - ✅ NFS-safe storage (JSON atomic writes, no SQLite)
 - ✅ Same NFS as HolyClaude (mount identical PVCs)
-- ✅ Interactive permissions (6 modes, per-project config)
+- ✅ Full permissions (`bypassPermissions`) matching HolyClaude's `Bash(*)` model, with denylist safety net
 - ✅ Per-project RBAC (`allow_from` per project)
 - ✅ Session persistence across restarts (JSON + `--resume`)
 - ✅ Massive community (7,700+ stars, very active)
@@ -587,15 +606,19 @@ PVs point to existing NFS exports:
 
 #### Step 4: Create `config.toml` (~30 minutes)
 
-Define either:
-- **Simple:** One `multi-workspace` project block with `base_dir = "/workspace/projects"` and per-channel `/workspace bind` at runtime
-- **Granular:** Separate `[[projects]]` blocks per workspace with per-project permission modes (recommended for infra vs. app separation)
+Single `multi-workspace` project block with `base_dir = "/workspace/projects"`, `mode = "bypassPermissions"`, `thread_isolation = true`. Per-channel `/workspace bind` at runtime maps `cc-` prefixed channels to directories.
 
-#### Step 5: Deploy via ArgoCD
+#### Step 5: Ensure Denylist Coverage (~15 minutes)
+
+The global `~/.claude/settings.json` on the NFS home volume already contains the 47-item denylist (shared with HolyClaude). Verify it's present — cc-connect's Claude subprocesses inherit it via the same `$HOME/.claude/` path.
+
+For workspaces that need additional restrictions beyond the global denylist, add a `.claude/settings.local.json` in that project directory. Workspaces that already have one (e.g., `HolyClaude`, `ff-k8s`) keep their existing settings.
+
+#### Step 6: Deploy via ArgoCD
 
 Add `cc-connect` to the app-of-apps ApplicationSet. ArgoCD syncs the manifests, creates the namespace, deploys the pod.
 
-#### Step 6: Bind Channels (~5 minutes)
+#### Step 7: Bind Channels (~5 minutes)
 
 Because channels use the `cc-` prefix, the auto-convention (`channel name = directory name`) won't match. Run `/workspace bind` in each channel to create the explicit mapping:
 
@@ -623,7 +646,7 @@ Because channels use the `cc-` prefix, the auto-convention (`channel name = dire
 
 Bindings persist in `workspace_bindings.json` — this is a one-time setup per channel.
 
-#### Step 7: Verify & Snapshot
+#### Step 8: Verify & Snapshot
 
 1. Send a test message in each channel → verify thread creation and response
 2. Create a Proxmox ZFS snapshot of the NFS dataset on prox0
@@ -636,6 +659,7 @@ Bindings persist in `workspace_bindings.json` — this is a one-time setup per c
 | **Container image** | ~2 hours | Build custom image with cc-connect (Go binary or npm) + Claude Code CLI. Push to GHCR |
 | **K8s manifests** | ~1 hour | Deployment, ConfigMap, PVs/PVCs, SOPS Secret. Follow HolyClaude pattern exactly |
 | **NFS export** | ~10 min | Create `/tank/k8s/cc-connect` on prox0 for cc-connect's JSON session data |
+| **Per-workspace denylist** | ~15 min | Verify global denylist on NFS home. For workspaces without `.claude/settings.local.json`, the global fallback applies. No new files needed if global denylist is sufficient |
 | **Worktree isolation** (optional) | ~30 min | Inject system prompt via `config.toml` that instructs Claude to create `git worktree` before editing. Not a code change — config only |
 | **Health check / monitoring** | Nice-to-have | cc-connect has an embedded web admin UI — expose as ClusterIP service for internal monitoring |
 
