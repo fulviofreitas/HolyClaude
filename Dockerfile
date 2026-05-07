@@ -62,6 +62,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
+# ---------- ImageMagick security patch (deb12u9) ----------
+# node:24-bookworm-slim ships imagemagick deb12u8; Debian Security released
+# deb12u9 with fixes for CVE-2026-25971 (critical), CVE-2026-33900/33901/
+# 33905/33908 (high), CVE-2026-33899/34238/40310/40311 (medium).
+# This step upgrades the five affected packages explicitly so the fix lands
+# regardless of base-image layer-cache age.
+RUN apt-get update && apt-get install -y --only-upgrade --no-install-recommends \
+    imagemagick \
+    imagemagick-6-common \
+    imagemagick-6.q16 \
+    libmagickcore-6.q16-6 \
+    libmagickwand-6.q16-6 \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---------- bubblewrap setuid (Codex CLI sandbox on restricted kernels) ----------
 RUN chmod u+s /usr/bin/bwrap
 
