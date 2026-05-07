@@ -37,7 +37,7 @@
 
 ## 1. Executive Summary
 
-**Goal:** Expose multiple Claude Code workspaces (one per project/repo) through a single Discord guild, with **one channel per workspace** and **one thread per session** — enabling multiple concurrent Claude Code sessions against the same codebase. Each channel has its own independent CLAUDE.md, `.claude/`, and tool permissions.
+**Goal:** Expose multiple Claude Code workspaces (one per project/repo) through a single Discord guild, with **one channel per workspace** (prefixed `cc-`) and **one thread per session** — enabling multiple concurrent Claude Code sessions against the same codebase. Each channel has its own independent CLAUDE.md, `.claude/`, and tool permissions.
 
 **Recommendation:** **GO** — use **`chenhg5/cc-connect`** deployed as a **Kubernetes pod** in the existing homelab cluster, mounting the same NFS volumes already used by HolyClaude.
 
@@ -93,7 +93,7 @@ cc-connect is the clear winner after re-evaluation:
 | Attribute | Detail |
 |---|---|
 | Architecture | Multi-agent bridge. Spawns `claude` CLI as subprocess via `os/exec`. Fully concurrent — each session runs in isolated goroutines |
-| Multi-workspace | **Yes — two mechanisms.** (1) Standard mode: one `[[projects]]` block per workspace with explicit `work_dir`. (2) Multi-workspace mode: `mode = "multi-workspace"` with `base_dir`, channel name auto-maps to subdirectory. `/workspace bind`, `/workspace init`, `/workspace list` slash commands |
+| Multi-workspace | **Yes — two mechanisms.** (1) Standard mode: one `[[projects]]` block per workspace with explicit `work_dir`. (2) Multi-workspace mode: `mode = "multi-workspace"` with `base_dir`, channel name auto-maps to subdirectory. `/workspace bind`, `/workspace init`, `/workspace list` slash commands. **No native `channel_prefix` config**, but `/workspace bind` overrides the auto-convention — so channels can be named `cc-*` and explicitly bound to the correct subdirectory |
 | Per-thread sessions | **Yes.** `thread_isolation = true` in Discord platform config. Session key switches from `discord:{channelID}:{userID}` to `discord:{threadID}`. Each thread = independent Claude Code subprocess with `--resume` support. Multiple threads per channel run concurrently |
 | Auth | **Subscription supported.** Inherits credentials from `claude` CLI (`~/.claude/.credentials.json` from `claude login`). Also supports API key (`ANTHROPIC_API_KEY`), Bedrock, Vertex, custom providers. Multiple `[[providers]]` configurable with runtime switching (`/provider switch`) |
 | Session persistence | **JSON files via atomic writes.** `~/.cc-connect/sessions.json` stores session maps, workspace bindings. Claude sessions resumed via `--resume <sessionID>` on restart. **No SQLite — NFS-safe** |
@@ -332,39 +332,49 @@ HolyClaude already has a `secrets/` directory at `/workspace/projects/ff-k8s/k8s
 
 ### 5.1 Discord Guild Layout
 
-Single private guild. One channel per workspace, threads for sessions within each workspace.
+Single private guild. One channel per workspace, all prefixed with `cc-` for easy identification. Threads for sessions within each workspace.
+
+#### Channel Naming Convention: `cc-` Prefix
+
+cc-connect has no native `channel_prefix` config — the auto-mapping convention is `channel name = directory name`. However, the `/workspace bind` slash command stores an explicit binding (persisted in `workspace_bindings.json`) that **takes precedence** over the auto-convention. This means:
+
+1. Name channels with the `cc-` prefix: `#cc-openclaw`, `#cc-ff-k8s`, etc.
+2. On first use, run `/workspace bind <dirname>` in each channel to map the prefixed channel name to the actual directory.
+3. Bindings persist across restarts in JSON — this is a one-time setup per channel.
+
+The `cc-` prefix provides clear visual separation from other guild channels and makes it obvious which channels are Claude Code workspaces.
 
 ```
 📁 CLAUDE CODE WORKSPACES
-├── #whatsapp-vault          → /workspace/projects/whatsapp_downloader
+├── #cc-whatsapp-vault       → /workspace/projects/whatsapp_downloader
 │   ├── Thread: "fix media dedup"           (session 1)
 │   └── Thread: "add heif support"          (session 2, concurrent)
-├── #openclaw                → /workspace/projects/openclaw
+├── #cc-openclaw             → /workspace/projects/openclaw
 │   ├── Thread: "refactor webhook handler"  (session 1)
 │   └── Thread: "add rate limiting"         (session 2, concurrent)
-├── #calbridge               → /workspace/projects/calbridge
-├── #ff-k8s                  → /workspace/projects/ff-k8s
-├── #holyclaude              → /workspace/projects/HolyClaude
-├── #eero-ui                 → /workspace/projects/eero-ui
-├── #eero-api                → /workspace/projects/eero-api
-├── #eeroctl                 → /workspace/projects/eeroctl
-├── #eero-prometheus         → /workspace/projects/eero-prometheus-exporter
-├── #bambuddy-cloud          → /workspace/projects/bambuddy_cloud
-├── #notion-automations      → /workspace/projects/notion-automations
-├── #unbound                 → /workspace/projects/unbound
-├── #workflow-arsenal         → /workspace/projects/workflow-arsenal
-├── #dns-zones               → /workspace/projects/dns-zones
-├── #prox-cluster            → /workspace/projects/prox-cluster
-├── #prox-new                → /workspace/projects/prox-new
-├── #cloudcli-ccusage        → /workspace/projects/cloudcli-plugin-ccusage
-├── #ff-net                  → /workspace/projects/ff-net
-├── #tfstates-ui             → /workspace/projects/tfstates-ui
+├── #cc-calbridge            → /workspace/projects/calbridge
+├── #cc-ff-k8s               → /workspace/projects/ff-k8s
+├── #cc-holyclaude           → /workspace/projects/HolyClaude
+├── #cc-eero-ui              → /workspace/projects/eero-ui
+├── #cc-eero-api             → /workspace/projects/eero-api
+├── #cc-eeroctl              → /workspace/projects/eeroctl
+├── #cc-eero-prometheus      → /workspace/projects/eero-prometheus-exporter
+├── #cc-bambuddy-cloud       → /workspace/projects/bambuddy_cloud
+├── #cc-notion-automations   → /workspace/projects/notion-automations
+├── #cc-unbound              → /workspace/projects/unbound
+├── #cc-workflow-arsenal     → /workspace/projects/workflow-arsenal
+├── #cc-dns-zones            → /workspace/projects/dns-zones
+├── #cc-prox-cluster         → /workspace/projects/prox-cluster
+├── #cc-prox-new             → /workspace/projects/prox-new
+├── #cc-cloudcli-ccusage     → /workspace/projects/cloudcli-plugin-ccusage
+├── #cc-ff-net               → /workspace/projects/ff-net
+├── #cc-tfstates-ui          → /workspace/projects/tfstates-ui
 📁 BOT ADMIN
-├── #bot-logs                → (bot status, errors, session events)
-├── #bot-config              → (slash commands: /workspace, /mode, /new, /stop)
+├── #cc-bot-logs             → (bot status, errors, session events)
+├── #cc-bot-config           → (slash commands: /workspace, /mode, /new, /stop)
 ```
 
-**UX flow:** Post a message in `#openclaw` → cc-connect creates a thread for the session → all conversation happens in that thread → start another thread in `#openclaw` for a parallel session → both run concurrently against the same workspace directory.
+**UX flow:** Post a message in `#cc-openclaw` → cc-connect creates a thread for the session → all conversation happens in that thread → start another thread in `#cc-openclaw` for a parallel session → both run concurrently against the same workspace directory.
 
 **Role-based permission scheme:**
 
@@ -407,7 +417,7 @@ allow_from = "<your-discord-user-id>"
 progress_style = "card"
 ```
 
-With this config, `#openclaw` binds to `/workspace/projects/openclaw`, `#ff-k8s` binds to `/workspace/projects/ff-k8s`, etc. The `/workspace bind` slash command handles channel-to-directory mapping.
+With this config and `cc-` prefixed channel names, the auto-convention won't match directories directly (there's no `/workspace/projects/cc-openclaw`). Use `/workspace bind` in each channel to create the explicit mapping — e.g., `/workspace bind openclaw` in `#cc-openclaw`. Bindings persist in `workspace_bindings.json` across restarts.
 
 Alternatively, for per-project permission granularity, define explicit `[[projects]]` blocks:
 
@@ -434,27 +444,27 @@ mode = "acceptEdits"
 
 **Verified directories on `/workspace/projects/` that should get channels:**
 
-| Channel | Directory | Permission Mode |
-|---|---|---|
-| `#whatsapp-vault` | `whatsapp_downloader` | `acceptEdits` |
-| `#openclaw` | `openclaw` | `acceptEdits` |
-| `#calbridge` | `calbridge` | `acceptEdits` |
-| `#ff-k8s` | `ff-k8s` | `default` (manual — infra) |
-| `#holyclaude` | `HolyClaude` | `default` (manual — self-modifying) |
-| `#eero-ui` | `eero-ui` | `acceptEdits` |
-| `#eero-api` | `eero-api` | `acceptEdits` |
-| `#eeroctl` | `eeroctl` | `acceptEdits` |
-| `#eero-prometheus` | `eero-prometheus-exporter` | `acceptEdits` |
-| `#bambuddy-cloud` | `bambuddy_cloud` | `acceptEdits` |
-| `#notion-automations` | `notion-automations` | `acceptEdits` |
-| `#unbound` | `unbound` | `default` (manual — DNS) |
-| `#workflow-arsenal` | `workflow-arsenal` | `acceptEdits` |
-| `#dns-zones` | `dns-zones` | `default` (manual — DNS) |
-| `#prox-cluster` | `prox-cluster` | `default` (manual — infra) |
-| `#prox-new` | `prox-new` | `default` (manual — infra) |
-| `#cloudcli-ccusage` | `cloudcli-plugin-ccusage` | `acceptEdits` |
-| `#ff-net` | `ff-net` | `default` (manual — networking) |
-| `#tfstates-ui` | `tfstates-ui` | `acceptEdits` |
+| Channel | `/workspace bind` arg | Directory | Permission Mode |
+|---|---|---|---|
+| `#cc-whatsapp-vault` | `whatsapp_downloader` | `whatsapp_downloader` | `acceptEdits` |
+| `#cc-openclaw` | `openclaw` | `openclaw` | `acceptEdits` |
+| `#cc-calbridge` | `calbridge` | `calbridge` | `acceptEdits` |
+| `#cc-ff-k8s` | `ff-k8s` | `ff-k8s` | `default` (manual — infra) |
+| `#cc-holyclaude` | `HolyClaude` | `HolyClaude` | `default` (manual — self-modifying) |
+| `#cc-eero-ui` | `eero-ui` | `eero-ui` | `acceptEdits` |
+| `#cc-eero-api` | `eero-api` | `eero-api` | `acceptEdits` |
+| `#cc-eeroctl` | `eeroctl` | `eeroctl` | `acceptEdits` |
+| `#cc-eero-prometheus` | `eero-prometheus-exporter` | `eero-prometheus-exporter` | `acceptEdits` |
+| `#cc-bambuddy-cloud` | `bambuddy_cloud` | `bambuddy_cloud` | `acceptEdits` |
+| `#cc-notion-automations` | `notion-automations` | `notion-automations` | `acceptEdits` |
+| `#cc-unbound` | `unbound` | `unbound` | `default` (manual — DNS) |
+| `#cc-workflow-arsenal` | `workflow-arsenal` | `workflow-arsenal` | `acceptEdits` |
+| `#cc-dns-zones` | `dns-zones` | `dns-zones` | `default` (manual — DNS) |
+| `#cc-prox-cluster` | `prox-cluster` | `prox-cluster` | `default` (manual — infra) |
+| `#cc-prox-new` | `prox-new` | `prox-new` | `default` (manual — infra) |
+| `#cc-cloudcli-ccusage` | `cloudcli-plugin-ccusage` | `cloudcli-plugin-ccusage` | `acceptEdits` |
+| `#cc-ff-net` | `ff-net` | `ff-net` | `default` (manual — networking) |
+| `#cc-tfstates-ui` | `tfstates-ui` | `tfstates-ui` | `acceptEdits` |
 
 **Excluded:** `calbridge-fix`, `eero-*-context`, `codeserver`, `fix-mcp`, `freitasnas`, `mediaserver`, `migrate-perc-unraid-to-prox`, `plex`, `prox-updates-fix`, `teslamate`, `tigra-store`, `awesome-claude-code-subagents`, `docker01`
 
@@ -493,8 +503,8 @@ For explicit `@<user>` pings on task completion, cc-connect's message templates 
 
 | Workspace Category | Permission Mode | Channels | Justification |
 |---|---|---|---|
-| **Infrastructure** | `default` (manual approval for everything) | `#ff-k8s`, `#prox-cluster`, `#prox-new`, `#dns-zones`, `#unbound`, `#ff-net` | Destructive potential: Terraform apply, DNS changes, Proxmox config. Every tool call must be approved |
-| **Self-modifying** | `default` | `#holyclaude` | Changes to this project could affect the bot itself |
+| **Infrastructure** | `default` (manual approval for everything) | `#cc-ff-k8s`, `#cc-prox-cluster`, `#cc-prox-new`, `#cc-dns-zones`, `#cc-unbound`, `#cc-ff-net` | Destructive potential: Terraform apply, DNS changes, Proxmox config. Every tool call must be approved |
+| **Self-modifying** | `default` | `#cc-holyclaude` | Changes to this project could affect the bot itself |
 | **Application code** | `acceptEdits` | All others | File edits auto-approved, shell commands still require confirmation. Lower blast radius |
 
 ### Limitations to Accept
@@ -537,7 +547,7 @@ For explicit `@<user>` pings on task completion, cc-connect's message templates 
 3. Enable **Message Content Intent** under Privileged Gateway Intents.
 4. Bot permissions: Send Messages, Send Messages in Threads, Read Message History, Embed Links, Attach Files, Add Reactions, Create Public Threads, Use Slash Commands.
 5. Invite bot to the private guild.
-6. Create `CLAUDE CODE WORKSPACES` category and channels per §5.1.
+6. Create `CLAUDE CODE WORKSPACES` category and `cc-` prefixed channels per §5.1.
 7. Lock category permissions to `@Bot Admin` + `@Claude Bot`.
 
 #### Step 2: Build Container Image (~2 hours)
@@ -587,15 +597,31 @@ Add `cc-connect` to the app-of-apps ApplicationSet. ArgoCD syncs the manifests, 
 
 #### Step 6: Bind Channels (~5 minutes)
 
-In each Discord channel:
+Because channels use the `cc-` prefix, the auto-convention (`channel name = directory name`) won't match. Run `/workspace bind` in each channel to create the explicit mapping:
+
 ```
-/workspace bind whatsapp_downloader    (in #whatsapp-vault)
-/workspace bind openclaw               (in #openclaw)
-/workspace bind calbridge              (in #calbridge)
-...etc
+/workspace bind whatsapp_downloader       (in #cc-whatsapp-vault)
+/workspace bind openclaw                  (in #cc-openclaw)
+/workspace bind calbridge                 (in #cc-calbridge)
+/workspace bind ff-k8s                    (in #cc-ff-k8s)
+/workspace bind HolyClaude                (in #cc-holyclaude)
+/workspace bind eero-ui                   (in #cc-eero-ui)
+/workspace bind eero-api                  (in #cc-eero-api)
+/workspace bind eeroctl                   (in #cc-eeroctl)
+/workspace bind eero-prometheus-exporter  (in #cc-eero-prometheus)
+/workspace bind bambuddy_cloud            (in #cc-bambuddy-cloud)
+/workspace bind notion-automations        (in #cc-notion-automations)
+/workspace bind unbound                   (in #cc-unbound)
+/workspace bind workflow-arsenal          (in #cc-workflow-arsenal)
+/workspace bind dns-zones                 (in #cc-dns-zones)
+/workspace bind prox-cluster              (in #cc-prox-cluster)
+/workspace bind prox-new                  (in #cc-prox-new)
+/workspace bind cloudcli-plugin-ccusage   (in #cc-cloudcli-ccusage)
+/workspace bind ff-net                    (in #cc-ff-net)
+/workspace bind tfstates-ui               (in #cc-tfstates-ui)
 ```
 
-Or, if using `multi-workspace` mode, channel names auto-map to directories.
+Bindings persist in `workspace_bindings.json` — this is a one-time setup per channel.
 
 #### Step 7: Verify & Snapshot
 
