@@ -1,6 +1,6 @@
 # Evaluation: Per-Workspace Discord Channel Routing for HolyClaude
 
-**Date:** 2026-05-07
+**Date:** 2026-05-07 (v2 — revised after feedback)
 **Status:** Evaluation complete — ready for decision
 **Author:** Claude (automated evaluation)
 
@@ -11,10 +11,11 @@
 - [1. Executive Summary](#1-executive-summary)
 - [2. Landscape Survey](#2-landscape-survey)
   - [2.1 Official Claude Code Channels Plugin](#21-official-claude-code-channels-plugin)
-  - [2.2 chadingTV/claudecode-discord](#22-chadingtvclaude-discord)
-  - [2.3 timoconnellaus/claude-code-discord-bot](#23-timoconnellausclaudecode-discord-bot)
-  - [2.4 Other 2026-Trending Options](#24-other-2026-trending-options)
-  - [2.5 Comparison Matrix](#25-comparison-matrix)
+  - [2.2 chenhg5/cc-connect](#22-chenhg5cc-connect)
+  - [2.3 chadingTV/claudecode-discord](#23-chadingtvclaude-discord)
+  - [2.4 timoconnellaus/claude-code-discord-bot](#24-timoconnellausclaudecode-discord-bot)
+  - [2.5 Other 2026-Trending Options](#25-other-2026-trending-options)
+  - [2.6 Comparison Matrix](#26-comparison-matrix)
 - [3. Per-Workspace Isolation Verification](#3-per-workspace-isolation-verification)
 - [4. Infrastructure Compatibility](#4-infrastructure-compatibility)
   - [4.1 Host Recommendation](#41-host-recommendation)
@@ -36,11 +37,19 @@
 
 ## 1. Executive Summary
 
-**Goal:** Expose multiple Claude Code workspaces (one per project/repo) through a single Discord guild, with one channel per workspace (`#whatsapp-vault`, `#openclaw`, `#calbridge`, etc.) — each channel having its own independent session, conversation history, CLAUDE.md, and tool permissions.
+**Goal:** Expose multiple Claude Code workspaces (one per project/repo) through a single Discord guild, with **one channel per workspace** and **one thread per session** — enabling multiple concurrent Claude Code sessions against the same codebase. Each channel has its own independent CLAUDE.md, `.claude/`, and tool permissions.
 
-**Recommendation:** **GO** — use **`chadingTV/claudecode-discord`** on **`docker01.local`** (Docker VM on `prox.local`).
+**Recommendation:** **GO** — use **`chenhg5/cc-connect`** deployed as a **Kubernetes pod** in the existing homelab cluster, mounting the same NFS volumes already used by HolyClaude.
 
-This option provides the cleanest channel-to-directory mapping with SQLite-backed session persistence, Discord-native tool approval buttons (no `--dangerously-skip-permissions`), queue management, subscription-based auth (zero per-token cost), and active maintenance (last commit April 2026). It runs as a single Docker container with outbound-only WebSocket to Discord — no ingress tunnels required.
+cc-connect is the clear winner after re-evaluation:
+- **Per-channel workspace:** Native multi-workspace mode (`base_dir` + channel name convention, or explicit `work_dir` per project)
+- **Per-thread session:** `thread_isolation = true` gives each Discord thread its own independent Claude Code session
+- **Subscription auth:** Inherits Claude CLI OAuth credentials (`~/.claude/.credentials.json`) — zero per-token cost
+- **NFS-safe:** No SQLite — session data stored as JSON via atomic writes. Compatible with the existing NFS mount at `10.0.4.11:/tank/k8s/code-server`
+- **Massive community:** 7,700+ stars, 107 commits since April 2026 release, MIT license
+- **Interactive permissions:** `--permission-mode` flags with Discord-surfaced approval prompts — no `--dangerously-skip-permissions` needed
+- **Single Go binary:** ~50-100 MB RSS baseline, trivial to containerize
+- **Bonus:** Supports 10+ AI agents and 11 messaging platforms — future-proof if the homelab expands beyond Claude-on-Discord
 
 ---
 
@@ -56,6 +65,7 @@ This option provides the cleanest channel-to-directory mapping with SQLite-backe
 |---|---|
 | Architecture | MCP server bridging into an existing, locally-running Claude Code session |
 | Multi-workspace | **No native support.** One bot token = one active session. Workaround: separate `DISCORD_STATE_DIR` + separate bot token + separate terminal per workspace |
+| Per-thread sessions | No — messages push into a single running session |
 | Auth | Anthropic-only (Pro/Max/Teams/Enterprise or Console API key). **Not compatible with Bedrock/Vertex/Foundry** |
 | Session persistence | None — session must be actively open in a terminal. Messages dropped when closed |
 | Permission handling | Remote permission relay via Discord (if configured). Otherwise blocks at terminal |
@@ -63,9 +73,53 @@ This option provides the cleanest channel-to-directory mapping with SQLite-backe
 | Restart behavior | Session dies with terminal. Requires tmux/screen workaround for persistence |
 | Team/Enterprise | Disabled by default; admin must enable `channelsEnabled` |
 
-**Verdict for our use case:** **Not viable as primary solution.** The one-bot-per-session constraint means we'd need 10+ Discord bots, 10+ terminals (tmux sessions), and 10+ bot tokens to cover all workspaces. The research preview status adds instability risk. However, it's worth monitoring for GA — if Anthropic adds native multi-workspace routing, this becomes the obvious choice.
+**Verdict:** **Not viable.** One-bot-per-session means N bots + N terminals + N tokens for N workspaces. No thread isolation. Research preview instability. Monitor for GA — if Anthropic adds multi-workspace routing, this becomes the obvious long-term choice.
 
-### 2.2 chadingTV/claudecode-discord
+### 2.2 chenhg5/cc-connect
+
+**Source:** [github.com/chenhg5/cc-connect](https://github.com/chenhg5/cc-connect)
+
+| Metric | Value |
+|---|---|
+| Stars | 7,700+ |
+| Forks | 717 |
+| Last commit | Active (107 commits since v1.3.2, April 21, 2026) |
+| Current version | v1.3.2 stable / v1.3.3-beta.1 (April 25, 2026) |
+| Open issues | 165 |
+| License | MIT |
+| Language | Go (requires Go 1.22+ to build) |
+| Runtime | Single self-contained binary |
+
+| Attribute | Detail |
+|---|---|
+| Architecture | Multi-agent bridge. Spawns `claude` CLI as subprocess via `os/exec`. Fully concurrent — each session runs in isolated goroutines |
+| Multi-workspace | **Yes — two mechanisms.** (1) Standard mode: one `[[projects]]` block per workspace with explicit `work_dir`. (2) Multi-workspace mode: `mode = "multi-workspace"` with `base_dir`, channel name auto-maps to subdirectory. `/workspace bind`, `/workspace init`, `/workspace list` slash commands |
+| Per-thread sessions | **Yes.** `thread_isolation = true` in Discord platform config. Session key switches from `discord:{channelID}:{userID}` to `discord:{threadID}`. Each thread = independent Claude Code subprocess with `--resume` support. Multiple threads per channel run concurrently |
+| Auth | **Subscription supported.** Inherits credentials from `claude` CLI (`~/.claude/.credentials.json` from `claude login`). Also supports API key (`ANTHROPIC_API_KEY`), Bedrock, Vertex, custom providers. Multiple `[[providers]]` configurable with runtime switching (`/provider switch`) |
+| Session persistence | **JSON files via atomic writes.** `~/.cc-connect/sessions.json` stores session maps, workspace bindings. Claude sessions resumed via `--resume <sessionID>` on restart. **No SQLite — NFS-safe** |
+| Permission handling | `--permission-mode` flag with 6 modes: `default` (manual approval), `acceptEdits`, `plan`, `auto`, `bypassPermissions`/`yolo`, `dontAsk`. Interactive approval surfaced in Discord. Pre-approved/disallowed tool lists in config. Optional `run_as_user` for OS-user isolation |
+| RBAC | `allow_from = "userID1,userID2"` or `"*"` per project. Per-project isolation |
+| Queue | In-memory, max 5 per session. `MsgQueueFull` notification when full. Lost on restart |
+| Stop / control | Slash commands for session management: `/new`, `/switch`, `/list`, `/stop`, `/mode`, `/dir`, `/provider switch` |
+| Restart behavior | Sessions resume from JSON. Workspace bindings persist. Active turn state lost. 15-minute idle reaper for unused workspace instances |
+
+**Discord-specific features:**
+
+| Feature | Supported |
+|---|---|
+| Threads | ✅ Full `thread_isolation` mode |
+| Slash commands | ✅ Registered via `ApplicationCommandBulkOverwrite` |
+| Buttons | ✅ `cmd:` prefix triggers command execution |
+| Embeds | Partial (card progress style) |
+| Attachments | ✅ Up to 50 MiB download |
+| DMs | ✅ |
+| Per-guild commands | ✅ via `guild_id` config |
+| Proxy support | ✅ HTTP/SOCKS5 |
+| Progress styles | 3 options: `legacy`, `compact`, `card` |
+
+**Why the initial evaluation was wrong:** The v1 evaluation dismissed cc-connect as "overkill — 11 platforms, 10 agents, Go binary, Web UI. We need Claude Code on Discord, not a polyglot agent hub." This was a mistake. cc-connect's multi-platform/multi-agent support is a bonus, not a tax. The core Claude Code + Discord integration is first-class, with multi-workspace mode, thread isolation, interactive permissions, and NFS-safe persistence — features none of the Discord-only bots match. The Go binary is lightweight (~50-100 MB RSS), has zero runtime dependencies, and the "extra" platform support costs nothing when unused.
+
+### 2.3 chadingTV/claudecode-discord
 
 **Source:** [github.com/chadingTV/claudecode-discord](https://github.com/chadingTV/claudecode-discord)
 
@@ -80,24 +134,18 @@ This option provides the cleanest channel-to-directory mapping with SQLite-backe
 
 | Attribute | Detail |
 |---|---|
-| Architecture | One Discord channel = one project directory. `/register <folder>` binds channel to path under `BASE_PROJECT_DIR` |
-| Multi-workspace | **Yes — native.** Unlimited channels per bot instance, each pointing to a different subdirectory. Multi-machine via separate bot instances sharing one guild |
-| Auth | **Subscription-only** (Claude Pro/Max via Claude Agent SDK). No API key needed or supported. Zero per-token cost |
-| Session persistence | **SQLite-backed.** `sessions` table stores `session_id`, `channel_id`, `status`. Sessions resume on restart via stored session IDs |
-| Permission handling | Discord button UI: Approve / Deny / Auto-approve All. Safe tools (Read, Glob) auto-approved. Per-channel `auto_approve` flag persisted in SQLite |
-| RBAC | `ALLOWED_USER_IDS` comma-separated allowlist. Guild ID validation. No per-channel user restrictions |
-| Queue | In-memory, max 5 per channel. `/queue list` and `/queue clear` commands. **Queue lost on restart** |
-| Stop button | Yes — Discord button + `/stop` slash command |
-| Restart behavior | Sessions resume from SQLite. Queue (in-memory) is lost. `.bot.lock` prevents duplicate instances |
+| Architecture | `/register <folder>` binds channel to path under `BASE_PROJECT_DIR` |
+| Multi-workspace | **Yes — native.** Unlimited channels per bot instance |
+| Per-thread sessions | **No.** Strictly per-channel. One channel = one session. No thread support |
+| Auth | **Subscription-only** (Claude Pro/Max via Claude Agent SDK). No API key |
+| Session persistence | **SQLite-backed** — `sessions` table with `session_id`, `channel_id`, `status`. **Not NFS-safe** — SQLite file locking fails on CIFS/NFS |
+| Permission handling | Discord button UI: Approve / Deny / Auto-approve All. Per-channel `auto_approve` flag |
+| RBAC | `ALLOWED_USER_IDS` comma-separated allowlist. Flat — no per-channel restrictions |
+| Queue | In-memory, max 5 per channel. Lost on restart |
 
-**Known limitations:**
-- In-memory queue lost on restart
-- No RBAC differentiation (all allowlisted users are equals)
-- O(N²) token growth in long sessions (open issue #4, no fix merged)
-- Single `BASE_PROJECT_DIR` per instance (projects outside that tree need absolute path workarounds)
-- Native `better-sqlite3` module requires C++ build toolchain
+**Verdict:** Good per-channel mapping, but **no per-thread sessions** and **SQLite breaks on NFS**. These are both hard blockers given the updated requirements.
 
-### 2.3 timoconnellaus/claude-code-discord-bot
+### 2.4 timoconnellaus/claude-code-discord-bot
 
 **Source:** [github.com/timoconnellaus/claude-code-discord-bot](https://github.com/timoconnellaus/claude-code-discord-bot)
 
@@ -106,70 +154,66 @@ This option provides the cleanest channel-to-directory mapping with SQLite-backe
 | Stars | 70 |
 | Last commit | June 16, 2025 |
 | Open issues | 2 |
-| License | MIT |
-| Language | TypeScript (96.3%) |
-| Runtime | **Bun** (hard requirement) |
+| Runtime | Bun |
 
 | Attribute | Detail |
 |---|---|
-| Architecture | Channel name = folder name. `path.join(BASE_FOLDER, channel.name)` — zero-config mapping |
-| Multi-workspace | **Yes — native.** Channel name is the directory name. Simple and elegant |
-| Auth | Delegates to Claude Code CLI (subscription or API key, whatever the CLI is configured with) |
-| Session persistence | **SQLite-backed** (`sessions.db`). `--resume <session_id>` on subsequent messages. 30-day auto-purge |
-| Permission handling | **MCP bridge** — dangerous tools (Bash, Write, Edit) trigger Discord reaction-based approval. No `--dangerously-skip-permissions`. 30-second timeout with configurable default |
-| RBAC | **Single user only.** `ALLOWED_USER_ID` accepts exactly one Discord user ID |
-| Queue | **None.** Concurrent messages to active channels are silently dropped |
-| Stop button | Not documented |
-| Restart behavior | Sessions resume from SQLite. No queue to lose |
+| Multi-workspace | Yes (channel name = folder name) |
+| Per-thread sessions | **No** |
+| Auth | CLI-delegated (subscription or API key) |
+| Session persistence | SQLite — same NFS issue as chadingTV |
+| RBAC | Single user only |
 
-**Known limitations:**
-- **Single user only** — no multi-user, no teams
-- **No Docker support** — no Dockerfile, no Compose
-- **No queue** — messages dropped during active processing
-- Model hard-coded to `sonnet`
-- 5-minute hard timeout per process
-- `#general` channel permanently excluded
-- Bun runtime required (not Node.js)
-- Last significant commit: June 2025 — **10+ months stale**
+**Verdict:** 10+ months stale. No threads. No Docker. Single user. SQLite on NFS. Rejected.
 
-### 2.4 Other 2026-Trending Options
+### 2.5 Other 2026-Trending Options
 
-| Project | Stars | Last Commit | Auth | Multi-Workspace | Unique Angle |
-|---|---|---|---|---|---|
-| **zebbern/claude-code-discord** | 190 | Mar 2026 | API key or subscription | No (per-instance) | Most feature-complete single-workspace bot. Thread-per-session, RBAC, mid-session model switching, sandbox config. `USER_ID` for @mention |
-| **chenhg5/cc-connect** | 7,700 | Active | API key per provider | Yes (multi-project) | 10 AI agents × 11 messaging platforms. Go binary. Web admin UI. Overkill for Claude-only use |
-| **ebibibi/claude-code-discord-bridge** | 41 | Feb 2026 | Subscription | Partial | Python-based. Git worktree per session. AI Lounge for cross-session coordination. REST API (`POST /api/spawn`). CI/CD integration |
-| **JessyTsui/Claude-Code-Remote** | 1,200 | Aug 2025 | Env-based | Yes (session map) | Email/Telegram primary, Discord webhook notifications only |
-| **777genius/claude-notifications-go** | 605 | Active | None (hooks) | N/A | Notification-only. Rich Discord embeds. Not interactive |
+| Project | Stars | Last Commit | Thread Sessions | Per-Channel Workspace | NFS-Safe | Subscription Auth |
+|---|---|---|---|---|---|---|
+| **zebbern/claude-code-discord** | 190 | Mar 2026 | ✅ (primary model) | ❌ (channel = entry point only) | Unknown | ⚠️ API key default |
+| **ebibibi/claude-code-discord-bridge** | 41 | Feb 2026 | ✅ (with worktree isolation!) | ✅ | SQLite ❌ | ✅ Subscription |
+| **JessyTsui/Claude-Code-Remote** | 1,200 | Aug 2025 | ❌ | Partial | Unknown | ✅ |
+| **777genius/claude-notifications-go** | 605 | Active | N/A (notification only) | N/A | N/A | N/A |
+| **fredchu/discord-claude-code-bot** | Low | Recent | ✅ (thread_id → session_uuid) | ❌ (global CWD) | SQLite ❌ | Unknown |
 
-**Notable:** `zebbern/claude-code-discord` (190 stars) is the most polished single-workspace bot but lacks native multi-workspace routing, which is a hard requirement. `cc-connect` (7,700 stars) is the heavyweight but is an agent-agnostic polyglot hub — massive overkill for "Claude Code on Discord."
+**Notable:** `ebibibi/claude-code-discord-bridge` is the only project with automatic **git worktree isolation** per thread (preventing concurrent file conflicts). It also has an "AI Lounge" for cross-session coordination and a REST API for programmatic session spawning. However, it uses SQLite (NFS-unsafe) and has only 41 stars with Python-based ops surface.
 
-### 2.5 Comparison Matrix
+`zebbern/claude-code-discord` (190 stars) is the most polished thread-per-session bot but lacks per-channel workspace binding — the channel is just an entry point for creating threads, not a workspace anchor.
 
-| Requirement | Official Plugin | chadingTV | timoconnellaus | zebbern |
-|---|---|---|---|---|
-| Multi-workspace (1 channel = 1 dir) | ❌ (workaround only) | ✅ Native | ✅ Native | ❌ (per-instance) |
-| Session persistence on restart | ❌ (requires tmux) | ✅ SQLite | ✅ SQLite | Partial |
-| No `--dangerously-skip-permissions` | ✅ Permission relay | ✅ Discord buttons | ✅ MCP reaction bridge | ✅ Interactive prompts |
-| Multi-user RBAC | ✅ Allowlist | ⚠️ Flat allowlist | ❌ Single user | ✅ Role-based |
-| Queue / concurrency | N/A | ✅ 5-item queue | ❌ Drop & skip | ✅ Thread-based |
-| Subscription auth (zero API cost) | ✅ | ✅ | ✅ (via CLI) | ⚠️ API key default |
-| Docker support | ❌ | ⚠️ (needs custom) | ❌ | ✅ Docker Compose |
-| Active maintenance (2026) | ✅ (Anthropic) | ✅ (Apr 2026) | ❌ (Jun 2025) | ✅ (Mar 2026) |
-| Runtime | Bun | Node.js 20+ | Bun | Deno |
+### 2.6 Comparison Matrix
+
+| Requirement | Official Plugin | cc-connect | chadingTV | timoconnellaus | zebbern | ebibibi |
+|---|---|---|---|---|---|---|
+| Per-channel workspace | ❌ | ✅ Native | ✅ Native | ✅ Native | ❌ | ✅ |
+| Per-thread sessions | ❌ | ✅ `thread_isolation` | ❌ | ❌ | ✅ | ✅ (+ worktrees) |
+| Subscription auth | ✅ | ✅ (via CLI) | ✅ (SDK) | ✅ (via CLI) | ⚠️ API key | ✅ |
+| NFS-safe storage | N/A | ✅ JSON atomic writes | ❌ SQLite | ❌ SQLite | Unknown | ❌ SQLite |
+| Session persistence | ❌ | ✅ JSON + `--resume` | ✅ SQLite | ✅ SQLite | Partial | ✅ SQLite |
+| Interactive permissions | ✅ Relay | ✅ 6 modes + Discord | ✅ Buttons | ✅ MCP bridge | ✅ | ✅ |
+| Concurrent cross-channel | N/A | ✅ Goroutine isolation | ✅ Async | ❌ Drop & skip | ✅ | ✅ |
+| Active maintenance (2026) | ✅ | ✅ (very active) | ✅ | ❌ (stale) | ✅ | ⚠️ (Feb 2026) |
+| Stars | 18.7k (repo) | **7,700+** | 43 | 70 | 190 | 41 |
+| Docker / k8s ready | ❌ | ⚠️ (custom image) | ⚠️ (custom) | ❌ | ✅ | ❌ |
+| Runtime | Bun | **Go binary** | Node.js | Bun | Deno | Python |
+
+**cc-connect is the only option that satisfies all four hard requirements:** per-channel workspace, per-thread sessions, subscription auth, and NFS-safe storage.
 
 ---
 
 ## 3. Per-Workspace Isolation Verification
 
-| Requirement | chadingTV (recommended) | Status |
+| Requirement | cc-connect (recommended) | Status |
 |---|---|---|
-| **Independent session state per channel** | Each channel gets its own `session_id` in SQLite, backed by a separate Claude Agent SDK session. Sessions are keyed by `channel_id`. | ✅ Confirmed |
-| **Independent CLAUDE.md per workspace** | Claude Code already scopes `CLAUDE.md` per project directory. The bot spawns sessions rooted at the registered directory, so each workspace reads its own `CLAUDE.md` and `.claude/` | ✅ Confirmed (inherits from Claude Code) |
-| **Independent .claude/ per workspace** | Same mechanism — `.claude/settings.local.json` in each project directory is respected because the session is started in that directory | ✅ Confirmed |
-| **Independent tool permissions per workspace** | Per-directory `.claude/settings.local.json` allowlists/denylists apply. Additionally, per-channel `auto_approve` flag in SQLite controls whether tool approvals are prompted | ✅ Confirmed |
-| **Sender allowlist / RBAC** | `ALLOWED_USER_IDS` env var (comma-separated Discord user IDs). Guild ID validation. All messages from non-listed users silently ignored | ✅ Confirmed (flat model, no roles) |
-| **Behavior on restart** | Sessions resume from SQLite via stored `session_id`. Channel-to-directory bindings persist. `auto_approve` flags persist. In-memory queue is lost | ⚠️ Partial — queue lost, sessions survive |
+| **Independent session state per channel** | Each `[[projects]]` block creates its own `Engine` instance in isolated goroutines. In multi-workspace mode, each channel binding gets a dedicated agent subprocess and session manager | ✅ Confirmed |
+| **Per-thread session isolation** | `thread_isolation = true` keys sessions by `discord:{threadID}`. Each thread gets its own Claude Code subprocess with independent context. Multiple threads run concurrently. Parent channel ID used for workspace binding (threads share the project directory) | ✅ Confirmed |
+| **Independent CLAUDE.md per workspace** | Claude Code scopes CLAUDE.md per project directory. cc-connect spawns `claude` with `work_dir` set to the bound directory, so each workspace reads its own CLAUDE.md and `.claude/` | ✅ Confirmed (inherits from Claude Code) |
+| **Independent .claude/ per workspace** | Same mechanism — `.claude/settings.local.json` in each project directory is respected because the subprocess starts in that directory | ✅ Confirmed |
+| **Independent tool permissions per workspace** | Per-project `allowed_tools` and `disallowed_tools` in `config.toml`. Plus per-directory `.claude/settings.local.json`. Plus per-project `mode` (permission mode). Triple-layered | ✅ Confirmed |
+| **Sender allowlist / RBAC** | `allow_from = "userID1,userID2"` per project. Different projects can have different allowlists | ✅ Confirmed (per-project granularity) |
+| **Behavior on restart** | Sessions resume from JSON via `--resume <sessionID>`. Workspace bindings persist. In-memory queue (5 items) lost. Active turn state lost | ⚠️ Queue lost, sessions survive |
+| **Filesystem safety on NFS** | No SQLite. JSON files with atomic writes (`AtomicWriteFile()`). NFS-safe | ✅ Confirmed |
+
+**Gap: No git worktree isolation.** When two threads in the same channel (`#openclaw`) run concurrently against `/workspace/projects/openclaw`, both write to the same working directory. This can cause file conflicts if both sessions edit the same files simultaneously. `ebibibi/claude-code-discord-bridge` solves this with automatic `wt-{thread_id}` worktrees, but cc-connect does not. Mitigation: treat same-workspace concurrent sessions as a "use carefully" feature and document the risk, or add a worktree wrapper via a custom system prompt.
 
 ---
 
@@ -177,72 +221,110 @@ This option provides the cleanest channel-to-directory mapping with SQLite-backe
 
 ### 4.1 Host Recommendation
 
-**Recommendation: `docker01.local` (Docker VM on `prox.local`)**
+**Recommendation: Kubernetes pod in the existing homelab cluster, mounting the same NFS volumes as HolyClaude.**
 
-| Factor | `docker01.local` (Docker VM) | New LXC on `prox0.local` |
-|---|---|---|
-| Docker native | ✅ Already a Docker host | ❌ Would need Docker-in-LXC (nesting) or direct install |
-| Restart semantics | `restart: unless-stopped` in Compose | systemd unit in LXC — works, but another management surface |
-| Resource footprint | Bot is lightweight (~200MB RSS). Fits easily alongside existing containers | Dedicated LXC is overkill for a single bot process |
-| Proximity to OpenClaw | OpenClaw is on `prox0.local` LXC 400/401 — network hop either way | Same hypervisor, marginally lower latency |
-| Workspace access | Bind-mount `/workspace/projects` from host → container | Would need NFS/SMB or rsync — adds complexity and latency |
-| Backup/snapshot | Proxmox snapshot of `docker01` VM covers the bot + all other containers | Separate LXC snapshot — cleaner isolation but more operational overhead |
-| Existing patterns | HolyClaude already runs on Docker with Compose. Same operational model | Introducing a new deployment pattern for one bot |
+This is a significant change from v1 (which recommended `docker01.local`). The NFS compatibility requirement makes the k8s cluster the natural deployment target.
 
-**Rationale:** The bot is a lightweight Node.js process with a SQLite database. It doesn't justify its own LXC. `docker01.local` already runs Docker workloads, the workspace directories are already accessible, and the deployment model (Docker Compose + `restart: unless-stopped`) matches the existing HolyClaude pattern exactly. Proximity to OpenClaw on `prox0.local` is irrelevant — the bot talks to Discord via outbound WebSocket and to Claude via the Agent SDK; there's no local inter-service traffic.
+**Current NFS layout (from HolyClaude k8s deployment):**
+
+| Volume | NFS Server | NFS Export Path | Used By |
+|---|---|---|---|
+| Workspace | `10.0.4.11` (prox0.local) | `/tank/k8s/code-server` | HolyClaude, code-server, repowise |
+| Home (Claude credentials) | `10.0.4.11` (prox0.local) | `/tank/k8s/holyclaude` | HolyClaude, agno |
+
+Both are already provisioned as PVs with `nfsvers=4.2`, `hard`, `intr` mount options and `nfs-external` StorageClass.
+
+| Factor | K8s pod (same cluster) | `docker01.local` (Docker VM) | New LXC on `prox0.local` |
+|---|---|---|---|
+| NFS access | ✅ Same PVCs already exist and are `ReadWriteMany` | ❌ Would need separate NFS mount on Docker host | ❌ NFS mount in LXC (works but new setup) |
+| Claude credentials | ✅ Shared via `nfs-holyclaude-home` PVC (already used by agno) | ❌ Would need credential copy or separate NFS mount | ❌ Separate mount needed |
+| Management plane | ✅ Same ArgoCD/Kustomize as all other apps | ❌ Docker Compose — different ops surface | ❌ systemd — third ops surface |
+| Restart semantics | ✅ Pod restart policy + liveness probes | ✅ `restart: unless-stopped` | ✅ systemd `restart=always` |
+| Resource footprint | Go binary ~50-100 MB RSS + Claude CLI subprocesses. Fits within cluster capacity | Same footprint, but needs the VM to stay up | Same |
+| Backup/snapshot | ✅ ArgoCD manifests in git. NFS data on prox0 ZFS (snapshotted) | Proxmox VM snapshot | LXC snapshot |
+| Proximity to workspace data | ✅ Same NFS, same network, zero additional latency | NFS mount over VLAN — small but nonzero latency | NFS local to prox0 — minimal latency |
+| Existing pattern | ✅ Identical to HolyClaude, agno, repowise deployments | Different (Docker Compose) | Different (systemd in LXC) |
+
+**Rationale:** The workspace lives on NFS at `10.0.4.11:/tank/k8s/code-server`. HolyClaude, code-server, and repowise already mount it as k8s PVCs. Claude credentials at `/tank/k8s/holyclaude` are already shared with agno. Deploying cc-connect as a k8s pod reuses all existing PVCs, credential sharing, and the ArgoCD management plane. No new NFS mounts, no new infrastructure patterns.
 
 ### 4.2 Auth Model
 
-| Option | Auth Mechanism | Cost Model | Supported By |
+| Option | Auth Mechanism | Subscription Support | Cost |
 |---|---|---|---|
-| Official Plugin | Anthropic auth (Pro/Max/Teams/Enterprise or Console API key) | Subscription or per-token (Console key) | Official plugin only |
-| chadingTV | **Subscription only** (Claude Pro/Max via Claude Agent SDK) | Flat subscription fee, zero per-token | chadingTV only |
-| timoconnellaus | Claude Code CLI (subscription or API key, whatever CLI is configured with) | Depends on CLI config | timoconnellaus |
-| zebbern | API key (`ANTHROPIC_API_KEY`) or subscription via CLI | Per-token or subscription | zebbern |
+| Official Plugin | Anthropic auth only | ✅ Pro/Max/Teams/Enterprise | Subscription |
+| **cc-connect** | **Inherits from `claude` CLI** | **✅ via `~/.claude/.credentials.json`** | **Subscription (flat fee)** |
+| chadingTV | Claude Agent SDK | ✅ Pro/Max only | Subscription |
+| zebbern | API key or CLI | ⚠️ API key default | Per-token or subscription |
 
-**For our deployment:** chadingTV uses subscription-only auth. This means:
-- Authenticate the Claude Code CLI on `docker01.local` once via `claude auth login` (OAuth flow).
-- Credentials stored at `~/.claude/.credentials.json` inside the container.
-- The bot inherits the auth — no API key to manage or rotate.
-- **Cost:** Flat subscription fee (Pro: $20/mo, Max: $100/mo or $200/mo). No per-token billing regardless of usage volume.
+**For our deployment:** cc-connect shells out to the `claude` binary, which inherits the OAuth credentials already stored at `~/.claude/.credentials.json` on the HolyClaude home NFS volume. The agno pod already does exactly this — mounts the same NFS path to share credentials. cc-connect follows the identical pattern.
+
+**No API key needed. No credential rotation needed.** The subscription OAuth token is managed by the Claude CLI itself.
+
+**Cost:** Flat subscription fee (Max $100/mo or $200/mo). No per-token billing. Multiple concurrent Claude subprocesses share the same subscription.
 
 ### 4.3 Persistence
 
-**Recommended approach:** Docker Compose with `restart: unless-stopped`
+**Recommended approach:** Kubernetes Deployment with `restartPolicy: Always`
 
 ```yaml
-# Shape of the deployment (not execution — for reference only)
-services:
-  claude-discord-bot:
-    build: ./claudecode-discord
-    restart: unless-stopped
-    environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
-      - ALLOWED_USER_IDS=${ALLOWED_USER_IDS}
-      - BASE_PROJECT_DIR=/workspace/projects
-    volumes:
-      - /path/to/workspace/projects:/workspace/projects
-      - /path/to/claude-credentials:/home/node/.claude
-      - ./data/bot-db:/app/data  # SQLite persistence
+# Shape of the deployment (reference only — not execution)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cc-connect
+  namespace: cc-connect
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # NFS PVC safety — same as HolyClaude
+  template:
+    spec:
+      containers:
+        - name: cc-connect
+          image: ghcr.io/<org>/cc-connect:latest  # Custom image needed
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: claude-home
+              mountPath: /home/claude
+            - name: cc-connect-data
+              mountPath: /home/claude/.cc-connect
+            - name: config
+              mountPath: /etc/cc-connect
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: cc-connect-workspace  # Same NFS export as HolyClaude
+        - name: claude-home
+          persistentVolumeClaim:
+            claimName: cc-connect-claude-home  # Same NFS export as HolyClaude
+        - name: cc-connect-data
+          persistentVolumeClaim:
+            claimName: cc-connect-data  # JSON session storage
+        - name: config
+          configMap:
+            name: cc-connect-config  # config.toml
 ```
 
-**Why not tmux/screen?** Those are session-dependent workarounds, not proper service management. Docker Compose with restart policy handles crashes, host reboots, and OOM kills automatically.
-
-**Why not systemd?** Would work in an LXC, but since we're recommending `docker01.local`, Docker Compose is the native idiom.
+New PVs/PVCs needed (pointing to existing NFS exports):
+- `cc-connect-workspace` → `10.0.4.11:/tank/k8s/code-server` (ReadWriteMany — same export as HolyClaude)
+- `cc-connect-claude-home` → `10.0.4.11:/tank/k8s/holyclaude` (ReadWriteMany — same export as agno)
+- `cc-connect-data` → `10.0.4.11:/tank/k8s/cc-connect` (new export — small, for JSON session files)
 
 ### 4.4 Secrets Management
 
-Follow the existing pattern observed in the HolyClaude stack: `.env` files at the deployment root, gitignored, with secrets passed as environment variables to containers.
+Follow the existing homelab pattern: **SOPS-encrypted secrets in the ff-k8s repo.**
+
+HolyClaude already has a `secrets/` directory at `/workspace/projects/ff-k8s/k8s-homelab/kubernetes/apps/holyclaude/secrets/` with SOPS-encrypted manifests.
 
 | Secret | Source | Storage |
 |---|---|---|
-| `DISCORD_TOKEN` | Discord Developer Portal → Bot → Token | `.env` on `docker01.local` |
-| `DISCORD_GUILD_ID` | Discord → Server Settings → Widget → Server ID | `.env` on `docker01.local` |
-| `ALLOWED_USER_IDS` | Discord → User Settings → Advanced → Developer Mode → Copy User ID | `.env` on `docker01.local` |
-| Claude credentials | `claude auth login` OAuth flow | `~/.claude/.credentials.json` (bind-mounted volume) |
+| `DISCORD_TOKEN` | Discord Developer Portal → Bot → Token | SOPS-encrypted Secret in `kubernetes/apps/cc-connect/secrets/` |
+| Discord Guild ID | Server Settings → Widget → Server ID | ConfigMap (not sensitive) |
+| `allow_from` user IDs | Discord Developer Mode → Copy User ID | ConfigMap (not sensitive) |
+| Claude credentials | Already on NFS at `/tank/k8s/holyclaude/.claude/` | NFS PVC mount (shared with HolyClaude + agno) |
 
-**No new secret management pattern needed.** The existing `.env` + Docker volume bind mount pattern used by HolyClaude is sufficient. The `.env` file is already gitignored at the workspace level.
+**No new secret management pattern.** Reuses the existing SOPS + age encryption already in place for the homelab.
 
 ---
 
@@ -250,12 +332,16 @@ Follow the existing pattern observed in the HolyClaude stack: `.env` files at th
 
 ### 5.1 Discord Guild Layout
 
-Single private guild. Recommended category and channel structure:
+Single private guild. One channel per workspace, threads for sessions within each workspace.
 
 ```
 📁 CLAUDE CODE WORKSPACES
 ├── #whatsapp-vault          → /workspace/projects/whatsapp_downloader
+│   ├── Thread: "fix media dedup"           (session 1)
+│   └── Thread: "add heif support"          (session 2, concurrent)
 ├── #openclaw                → /workspace/projects/openclaw
+│   ├── Thread: "refactor webhook handler"  (session 1)
+│   └── Thread: "add rate limiting"         (session 2, concurrent)
 ├── #calbridge               → /workspace/projects/calbridge
 ├── #ff-k8s                  → /workspace/projects/ff-k8s
 ├── #holyclaude              → /workspace/projects/HolyClaude
@@ -271,74 +357,119 @@ Single private guild. Recommended category and channel structure:
 ├── #prox-cluster            → /workspace/projects/prox-cluster
 ├── #prox-new                → /workspace/projects/prox-new
 ├── #cloudcli-ccusage        → /workspace/projects/cloudcli-plugin-ccusage
+├── #ff-net                  → /workspace/projects/ff-net
+├── #tfstates-ui             → /workspace/projects/tfstates-ui
 📁 BOT ADMIN
-├── #bot-logs                → (bot status, errors, queue events)
-├── #bot-config              → (slash commands: /register, /unregister, /queue)
+├── #bot-logs                → (bot status, errors, session events)
+├── #bot-config              → (slash commands: /workspace, /mode, /new, /stop)
 ```
+
+**UX flow:** Post a message in `#openclaw` → cc-connect creates a thread for the session → all conversation happens in that thread → start another thread in `#openclaw` for a parallel session → both run concurrently against the same workspace directory.
 
 **Role-based permission scheme:**
 
 | Role | Permissions | Members |
 |---|---|---|
-| `@Bot Admin` | Manage Channels, Manage Messages, Use Slash Commands in all channels | You (owner) |
-| `@Claude Bot` | Send Messages, Read Message History, Embed Links, Attach Files, Add Reactions, Use External Emojis | Bot application |
-| `@everyone` | No access to any channel (private guild, explicit grants only) | — |
+| `@Bot Admin` | Manage Channels, Manage Messages, Use Slash Commands, Create Threads | You (owner) |
+| `@Claude Bot` | Send Messages, Send Messages in Threads, Read Message History, Embed Links, Attach Files, Add Reactions, Create Public Threads | Bot application |
+| `@everyone` | No access (private guild, explicit grants only) | — |
 
-**Category permissions:** Lock the `CLAUDE CODE WORKSPACES` category to `@Bot Admin` + `@Claude Bot` only. This prevents accidental access if you ever invite someone to the guild.
+**Category permissions:** Lock `CLAUDE CODE WORKSPACES` category to `@Bot Admin` + `@Claude Bot`. Thread permissions inherit from parent channel.
 
 ### 5.2 Network / Ingress
 
 **Confirmed: No Cloudflare Tunnel or ingress needed.**
 
-The Discord bot connects outbound via WebSocket to `gateway.discord.gg`. The Claude Agent SDK connects outbound to Anthropic's API. Both are outbound-only TCP connections initiated from the container. No listening ports need to be exposed to the internet.
-
-The only exposed port is the one Docker may bind for container-to-host communication (if any), which stays on the local Docker network.
+cc-connect connects outbound via WebSocket to `gateway.discord.gg`. The `claude` subprocess connects outbound to Anthropic's API. Both are outbound-only TCP. No listening ports exposed to the internet. The optional web admin UI can stay cluster-internal (ClusterIP service, no HTTPRoute needed initially).
 
 ### 5.3 Workspace Directory Mapping
 
-Verified directories on `/workspace/projects/` that should each get a channel:
+cc-connect `config.toml` shape for multi-workspace mode:
 
-| Channel Name | Directory Path | Notes |
+```toml
+[[projects]]
+name = "claude-workspaces"
+mode = "multi-workspace"
+base_dir = "/workspace/projects"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+mode = "acceptEdits"  # default permission mode
+
+[[projects.platforms]]
+type = "discord"
+token_env = "DISCORD_TOKEN"
+guild_id = "<guild-id>"
+thread_isolation = true
+allow_from = "<your-discord-user-id>"
+progress_style = "card"
+```
+
+With this config, `#openclaw` binds to `/workspace/projects/openclaw`, `#ff-k8s` binds to `/workspace/projects/ff-k8s`, etc. The `/workspace bind` slash command handles channel-to-directory mapping.
+
+Alternatively, for per-project permission granularity, define explicit `[[projects]]` blocks:
+
+```toml
+# Infrastructure — manual approval
+[[projects]]
+name = "ff-k8s"
+work_dir = "/workspace/projects/ff-k8s"
+[projects.agent]
+type = "claudecode"
+[projects.agent.options]
+mode = "default"  # manual approval for all tools
+allowed_tools = ["Read", "Grep", "Glob"]
+
+# Application code — acceptEdits
+[[projects]]
+name = "openclaw"
+work_dir = "/workspace/projects/openclaw"
+[projects.agent]
+type = "claudecode"
+[projects.agent.options]
+mode = "acceptEdits"
+```
+
+**Verified directories on `/workspace/projects/` that should get channels:**
+
+| Channel | Directory | Permission Mode |
 |---|---|---|
-| `#whatsapp-vault` | `/workspace/projects/whatsapp_downloader` | WhatsApp media downloader |
-| `#openclaw` | `/workspace/projects/openclaw` | OpenClaw project |
-| `#calbridge` | `/workspace/projects/calbridge` | Calendar bridge |
-| `#ff-k8s` | `/workspace/projects/ff-k8s` | Kubernetes homelab (contains terraform-proxmox, terraform-talos subdirs) |
-| `#holyclaude` | `/workspace/projects/HolyClaude` | This project |
-| `#eero-ui` | `/workspace/projects/eero-ui` | Eero dashboard UI |
-| `#eero-api` | `/workspace/projects/eero-api` | Eero API wrapper |
-| `#eeroctl` | `/workspace/projects/eeroctl` | Eero CLI tool |
-| `#eero-prometheus` | `/workspace/projects/eero-prometheus-exporter` | Eero Prometheus exporter |
-| `#bambuddy-cloud` | `/workspace/projects/bambuddy_cloud` | Bambu Lab cloud integration |
-| `#notion-automations` | `/workspace/projects/notion-automations` | Notion workflow automations |
-| `#unbound` | `/workspace/projects/unbound` | DNS resolver config |
-| `#workflow-arsenal` | `/workspace/projects/workflow-arsenal` | Workflow tools collection |
-| `#dns-zones` | `/workspace/projects/dns-zones` | DNS zone management |
-| `#prox-cluster` | `/workspace/projects/prox-cluster` | Proxmox cluster config |
-| `#prox-new` | `/workspace/projects/prox-new` | New Proxmox setup |
-| `#cloudcli-ccusage` | `/workspace/projects/cloudcli-plugin-ccusage` | CloudCLI usage plugin |
-| `#ff-net` | `/workspace/projects/ff-net` | Network config |
-| `#tfstates-ui` | `/workspace/projects/tfstates-ui` | Terraform state viewer |
+| `#whatsapp-vault` | `whatsapp_downloader` | `acceptEdits` |
+| `#openclaw` | `openclaw` | `acceptEdits` |
+| `#calbridge` | `calbridge` | `acceptEdits` |
+| `#ff-k8s` | `ff-k8s` | `default` (manual — infra) |
+| `#holyclaude` | `HolyClaude` | `default` (manual — self-modifying) |
+| `#eero-ui` | `eero-ui` | `acceptEdits` |
+| `#eero-api` | `eero-api` | `acceptEdits` |
+| `#eeroctl` | `eeroctl` | `acceptEdits` |
+| `#eero-prometheus` | `eero-prometheus-exporter` | `acceptEdits` |
+| `#bambuddy-cloud` | `bambuddy_cloud` | `acceptEdits` |
+| `#notion-automations` | `notion-automations` | `acceptEdits` |
+| `#unbound` | `unbound` | `default` (manual — DNS) |
+| `#workflow-arsenal` | `workflow-arsenal` | `acceptEdits` |
+| `#dns-zones` | `dns-zones` | `default` (manual — DNS) |
+| `#prox-cluster` | `prox-cluster` | `default` (manual — infra) |
+| `#prox-new` | `prox-new` | `default` (manual — infra) |
+| `#cloudcli-ccusage` | `cloudcli-plugin-ccusage` | `acceptEdits` |
+| `#ff-net` | `ff-net` | `default` (manual — networking) |
+| `#tfstates-ui` | `tfstates-ui` | `acceptEdits` |
 
-**Note:** Channel names in Discord are lowercase with hyphens (Discord enforces this). The `/register` command in chadingTV maps channel IDs (not names) to directories, so the channel name doesn't need to match the directory name exactly — it's just a human-readable label.
-
-**Directories intentionally excluded:**
-- `calbridge-fix` — temporary fix branch, not a standalone project
-- `eero-*-context` — context dumps, not active projects
-- `codeserver`, `fix-mcp`, `freitasnas`, `mediaserver`, `migrate-perc-unraid-to-prox`, `plex`, `prox-updates-fix`, `teslamate`, `tigra-store` — inactive, infrastructure-only, or no active Claude Code work
-- `awesome-claude-code-subagents`, `docker01` — reference/utility directories
+**Excluded:** `calbridge-fix`, `eero-*-context`, `codeserver`, `fix-mcp`, `freitasnas`, `mediaserver`, `migrate-perc-unraid-to-prox`, `plex`, `prox-updates-fix`, `teslamate`, `tigra-store`, `awesome-claude-code-subagents`, `docker01`
 
 ### 5.4 Notifications
 
-**Recommendation: Enable @mention on task completion.**
+**cc-connect handles @mention natively.** When the bot creates a thread or responds, the Discord mobile push notification system handles delivery. Users are notified when:
+- A thread is created in a channel they're watching
+- The bot replies in an active thread
+- A permission prompt requires approval
 
-chadingTV's bot sends Discord push notifications when Claude needs approval or completes tasks. These appear as mobile notifications even when the phone is locked — functionally equivalent to `USER_ID`-based @mention.
+For explicit `@<user>` pings on task completion, cc-connect's message templates can be customized. The `progress_style = "card"` mode provides structured completion messages.
 
-For explicit @mention behavior (pinging a specific user), this would need a minor customization: the bot's completion handler would need to prepend `<@USER_ID>` to the completion message. This is a ~5-line change in the session manager's `onComplete` callback.
-
-**Additionally:** Keep the existing Apprise notification system in HolyClaude (`notify.py` with `NOTIFY_DISCORD` webhook) as a separate, independent notification channel for Claude Code hook events (stop, error). These serve different purposes:
-- **Bot notifications:** Interactive session events (approval requests, completions, queue updates)
-- **Apprise webhook:** Fire-and-forget alerts from Claude Code hooks (task complete, tool failure)
+**Keep the existing Apprise webhook system** (`notify.py` with `NOTIFY_DISCORD`) as a separate, independent notification channel for HolyClaude's own hook events (task stop, tool failure). These are different systems serving different purposes:
+- **cc-connect:** Interactive Discord sessions via bot
+- **Apprise:** Fire-and-forget webhook alerts from HolyClaude's Claude Code hooks
 
 ---
 
@@ -348,34 +479,30 @@ For explicit @mention behavior (pinging a specific user), this would need a mino
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| **Official Plugin is research preview** | Medium | We're not using it as primary. Monitor for GA and re-evaluate when multi-workspace support lands |
-| **Anthropic auth only (official plugin)** | Low | Not using official plugin. chadingTV uses subscription auth which is Anthropic-native anyway |
-| **Permission prompts block sessions** | High | chadingTV solves this with Discord button approval UI. Per-channel `auto_approve` for trusted workspaces. **Do NOT use `--dangerously-skip-permissions` globally** |
-| **Single bot process = SPOF** | Medium | Docker `restart: unless-stopped` handles crashes. SQLite sessions survive restart. In-memory queue is lost (acceptable — queue is small, 5 items max) |
-| **No crash isolation per workspace** | Medium | A panic in one session's handler could theoretically affect others. The Claude Agent SDK runs sessions in separate async contexts, but they share a process. **Acceptable risk for personal use** |
-| **Discord Message Content Intent** | Low | Must be enabled in Discord Developer Portal → Bot → Privileged Gateway Intents → Message Content Intent. One-time setup, but forgetting it causes empty messages |
-| **O(N²) token growth in long sessions** | Medium | Open issue #4. Workaround: periodically `/clear` channels with long session histories. Monitor for upstream fix |
-| **Subscription dependency** | Low | If Claude Pro/Max subscription lapses, all sessions stop. No API key fallback. Keep subscription active |
+| **No git worktree isolation for concurrent threads** | Medium | Two threads in the same channel both write to the same `work_dir`. If both edit the same file simultaneously, conflicts occur. Mitigation: (1) document the risk, (2) consider injecting a system prompt that mandates `git worktree` creation (cc-connect supports `--system-prompt`), (3) for infra workspaces, use `default` permission mode so file writes require manual approval |
+| **Permission prompts block sessions** | High | Use per-project `mode` settings. Infrastructure channels: `default` (manual approval). App channels: `acceptEdits`. **Never use `bypassPermissions`/`yolo` for infrastructure workspaces** |
+| **Single bot process = SPOF** | Medium | K8s pod restart policy handles crashes. JSON sessions survive restart. Queue (5 items) lost. Go goroutine isolation means one crashed session doesn't take down others |
+| **Concurrent workspace access with HolyClaude** | Medium | The cc-connect pod and HolyClaude pod share the same NFS workspace. If both write to the same files simultaneously, conflicts can occur. Git's own conflict detection helps. In practice, you'll be using one or the other per project at any given time |
+| **Discord Message Content Intent** | Low | Must be enabled in Discord Developer Portal → Bot → Privileged Gateway Intents. One-time setup |
+| **macOS-specific OAuth issue (issue #752)** | None | Only affects macOS `launchd`. We're running in k8s Linux containers — not applicable |
+| **cc-connect has 165 open issues** | Low | Reflects scope and activity, not neglect. 107 commits since last release. Active beta track |
+| **Subscription dependency** | Low | If Pro/Max subscription lapses, all sessions stop. Keep subscription active |
+| **`CLAUDECODE` env var conflict** | Low | If cc-connect runs inside a Claude Code session, must `unset CLAUDECODE`. In k8s pod, this won't be set — not an issue |
 
 ### Security Trade-offs Per Workspace
 
-| Workspace | Recommended Permission Mode | Justification |
-|---|---|---|
-| `#ff-k8s` | **Manual approval** (auto_approve OFF) | Terraform/Talos — destructive infrastructure changes possible |
-| `#prox-cluster`, `#prox-new` | **Manual approval** | Proxmox infrastructure |
-| `#dns-zones` | **Manual approval** | DNS changes can cause outages |
-| `#holyclaude` | **Manual approval** | Changes to this project affect the bot itself |
-| `#openclaw`, `#calbridge`, `#eero-*` | **Auto-approve OK** | Application code, lower blast radius |
-| `#whatsapp-vault` | **Auto-approve OK** | Data processing, no infrastructure risk |
-| `#bambuddy-cloud`, `#notion-automations` | **Auto-approve OK** | Application code |
-| `#unbound` | **Manual approval** | DNS resolver config — mistakes cause DNS resolution failures |
+| Workspace Category | Permission Mode | Channels | Justification |
+|---|---|---|---|
+| **Infrastructure** | `default` (manual approval for everything) | `#ff-k8s`, `#prox-cluster`, `#prox-new`, `#dns-zones`, `#unbound`, `#ff-net` | Destructive potential: Terraform apply, DNS changes, Proxmox config. Every tool call must be approved |
+| **Self-modifying** | `default` | `#holyclaude` | Changes to this project could affect the bot itself |
+| **Application code** | `acceptEdits` | All others | File edits auto-approved, shell commands still require confirmation. Lower blast radius |
 
 ### Limitations to Accept
 
-1. **No per-channel user restrictions** — all allowlisted users can interact with all channels. Acceptable for personal/small-team use.
-2. **Queue is in-memory** — lost on restart. Acceptable given small queue size (5) and fast restart (~3 seconds).
-3. **Single `BASE_PROJECT_DIR`** — all projects must be under one root. Our `/workspace/projects` is already this root. ✅
-4. **`better-sqlite3` native module** — requires C++ toolchain in the Docker build. Standard for Node.js Docker images.
+1. **No automatic worktree isolation** — concurrent threads against the same workspace may conflict. Acceptable for personal use with awareness. Can be mitigated via system prompt if needed.
+2. **Queue is in-memory** (5 items, lost on restart). Acceptable — restarts are fast and rare.
+3. **Custom Docker image needed** — cc-connect has no official container image. Must build one with Go binary + Claude CLI. One-time effort.
+4. **Thread isolation has no filesystem guard** — sessions are isolated at the process level, not the filesystem level. This is the same model as running two terminal sessions against the same repo.
 
 ---
 
@@ -385,17 +512,19 @@ For explicit @mention behavior (pinging a specific user), this would need a mino
 
 **GO.**
 
-`chadingTV/claudecode-discord` satisfies all core requirements:
-- ✅ One channel = one directory (native design)
-- ✅ Independent sessions, CLAUDE.md, permissions per workspace
-- ✅ No `--dangerously-skip-permissions` (Discord button approval)
-- ✅ Session persistence across restarts (SQLite)
-- ✅ Subscription auth (zero per-token cost)
-- ✅ Sender allowlist
-- ✅ Active maintenance (April 2026)
-- ✅ MIT license
+`chenhg5/cc-connect` satisfies all core requirements:
+- ✅ Per-channel workspace mapping (multi-workspace mode, native)
+- ✅ Per-thread sessions (`thread_isolation = true`, concurrent)
+- ✅ Subscription auth (inherits Claude CLI OAuth — zero per-token cost)
+- ✅ NFS-safe storage (JSON atomic writes, no SQLite)
+- ✅ Same NFS as HolyClaude (mount identical PVCs)
+- ✅ Interactive permissions (6 modes, per-project config)
+- ✅ Per-project RBAC (`allow_from` per project)
+- ✅ Session persistence across restarts (JSON + `--resume`)
+- ✅ Massive community (7,700+ stars, very active)
+- ✅ MIT license, single Go binary, lightweight
 
-**Host:** `docker01.local` (Docker VM on `prox.local`)
+**Host:** Kubernetes pod in the existing homelab cluster, same namespace pattern as HolyClaude.
 
 ### 7.2 High-Level Deployment Outline
 
@@ -403,94 +532,88 @@ For explicit @mention behavior (pinging a specific user), this would need a mino
 
 #### Step 1: Discord Setup (~10 minutes)
 
-1. Create a Discord Application at [discord.com/developers](https://discord.com/developers/applications)
-2. Create a Bot under the application. Copy the bot token.
+1. Create a Discord Application at discord.com/developers
+2. Create a Bot. Copy the token.
 3. Enable **Message Content Intent** under Privileged Gateway Intents.
-4. Generate an OAuth2 invite URL with permissions: Send Messages, Read Message History, Embed Links, Attach Files, Add Reactions, Use Slash Commands.
-5. Invite the bot to the private guild.
-6. Create the `CLAUDE CODE WORKSPACES` category and channels per §5.1.
+4. Bot permissions: Send Messages, Send Messages in Threads, Read Message History, Embed Links, Attach Files, Add Reactions, Create Public Threads, Use Slash Commands.
+5. Invite bot to the private guild.
+6. Create `CLAUDE CODE WORKSPACES` category and channels per §5.1.
 7. Lock category permissions to `@Bot Admin` + `@Claude Bot`.
 
-#### Step 2: Prepare `docker01.local` (~15 minutes)
+#### Step 2: Build Container Image (~2 hours)
 
-1. Clone the repo:
-   ```bash
-   cd /opt/stacks  # or wherever Docker projects live on docker01
-   git clone https://github.com/chadingTV/claudecode-discord.git
-   cd claudecode-discord
-   ```
-
-2. Create `.env`:
-   ```env
-   DISCORD_TOKEN=<bot-token-from-step-1>
-   DISCORD_GUILD_ID=<guild-id>
-   ALLOWED_USER_IDS=<your-discord-user-id>
-   BASE_PROJECT_DIR=/workspace/projects
-   ```
-
-3. Authenticate Claude Code CLI:
-   ```bash
-   # Inside the container or on the host where Claude CLI is installed
-   claude auth login
-   # Complete OAuth flow — credentials stored at ~/.claude/.credentials.json
-   ```
-
-4. Create `docker-compose.yml` (shape):
-   ```yaml
-   services:
-     claude-discord:
-       build: .
-       restart: unless-stopped
-       env_file: .env
-       volumes:
-         - /path/to/workspace/projects:/workspace/projects
-         - /path/to/claude-credentials:/home/node/.claude
-         - ./data:/app/data
-   ```
-
-5. Start:
-   ```bash
-   docker compose up -d
-   ```
-
-#### Step 3: Register Channels (~5 minutes)
-
-In each Discord channel, run:
+```dockerfile
+# Shape only — not execution
+FROM node:22-slim AS base
+RUN npm install -g cc-connect @anthropic-ai/claude-code
+# OR: download pre-compiled Go binary from GitHub Releases
+COPY config.toml /etc/cc-connect/config.toml
+ENV HOME=/home/claude
+CMD ["cc-connect", "--config", "/etc/cc-connect/config.toml"]
 ```
-/register whatsapp_downloader    (in #whatsapp-vault)
-/register openclaw               (in #openclaw)
-/register calbridge              (in #calbridge)
-/register ff-k8s                 (in #ff-k8s)
+
+Push to `ghcr.io/<org>/cc-connect:latest`.
+
+#### Step 3: Create K8s Manifests (~1 hour)
+
+Under `/workspace/projects/ff-k8s/k8s-homelab/kubernetes/apps/cc-connect/`:
+
+```
+cc-connect/
+├── kustomization.yaml
+├── namespace.yaml           # cc-connect namespace
+├── deployment.yaml          # Pod spec with NFS mounts
+├── configmap.yaml           # config.toml
+├── persistentvolumes.yaml   # PVs for workspace + home + data
+├── secrets/                 # SOPS-encrypted Discord token
+│   └── discord-token.yaml
+└── README.md
+```
+
+PVs point to existing NFS exports:
+- `nfs-cc-connect-workspace` → `10.0.4.11:/tank/k8s/code-server` (same as HolyClaude)
+- `nfs-cc-connect-home` → `10.0.4.11:/tank/k8s/holyclaude` (same as HolyClaude/agno)
+- `nfs-cc-connect-data` → `10.0.4.11:/tank/k8s/cc-connect` (new small NFS export for JSON)
+
+#### Step 4: Create `config.toml` (~30 minutes)
+
+Define either:
+- **Simple:** One `multi-workspace` project block with `base_dir = "/workspace/projects"` and per-channel `/workspace bind` at runtime
+- **Granular:** Separate `[[projects]]` blocks per workspace with per-project permission modes (recommended for infra vs. app separation)
+
+#### Step 5: Deploy via ArgoCD
+
+Add `cc-connect` to the app-of-apps ApplicationSet. ArgoCD syncs the manifests, creates the namespace, deploys the pod.
+
+#### Step 6: Bind Channels (~5 minutes)
+
+In each Discord channel:
+```
+/workspace bind whatsapp_downloader    (in #whatsapp-vault)
+/workspace bind openclaw               (in #openclaw)
+/workspace bind calbridge              (in #calbridge)
 ...etc
 ```
 
-#### Step 4: Configure Per-Channel Permissions
+Or, if using `multi-workspace` mode, channel names auto-map to directories.
 
-In infrastructure channels (`#ff-k8s`, `#prox-cluster`, `#dns-zones`, `#holyclaude`, `#unbound`):
-```
-/auto-approve off
-```
+#### Step 7: Verify & Snapshot
 
-In application channels (`#openclaw`, `#calbridge`, `#eero-*`, `#whatsapp-vault`, `#bambuddy-cloud`):
-```
-/auto-approve on
-```
-
-#### Step 5: Snapshot / Backup
-
-Take a Proxmox snapshot of the `docker01` VM after successful deployment. This captures the bot container, SQLite database, registered channel mappings, and Claude credentials in a single recoverable state.
+1. Send a test message in each channel → verify thread creation and response
+2. Create a Proxmox ZFS snapshot of the NFS dataset on prox0
+3. Commit all k8s manifests to the ff-k8s repo
 
 ### 7.3 What Would Need to Be Built / Forked
 
 | Gap | Effort | Approach |
 |---|---|---|
-| **@mention on completion** | ~1 hour | Fork or PR: add `<@USER_ID>` prefix to completion messages in session manager's `onComplete` callback. ~5 lines of code |
-| **Dockerfile** | ~2 hours | The repo includes install scripts but no Docker image. Write a `Dockerfile` (Node.js 20 base, `npm install`, `npm run build`, copy dist). Straightforward |
-| **Per-channel user restrictions** | Not needed now | If needed later: add a `channel_allowed_users` table to SQLite, gate messages per channel. Medium effort (~1 day) |
-| **Persistent queue** | Nice-to-have | Move queue from in-memory `Map` to SQLite `message_queue` table. Low priority — queue loss on restart is acceptable for 5-item queues |
-| **Health check endpoint** | Nice-to-have | Add an HTTP `/health` endpoint for Docker `HEALTHCHECK` directive. ~30 minutes |
+| **Container image** | ~2 hours | Build custom image with cc-connect (Go binary or npm) + Claude Code CLI. Push to GHCR |
+| **K8s manifests** | ~1 hour | Deployment, ConfigMap, PVs/PVCs, SOPS Secret. Follow HolyClaude pattern exactly |
+| **NFS export** | ~10 min | Create `/tank/k8s/cc-connect` on prox0 for cc-connect's JSON session data |
+| **Worktree isolation** (optional) | ~30 min | Inject system prompt via `config.toml` that instructs Claude to create `git worktree` before editing. Not a code change — config only |
+| **Health check / monitoring** | Nice-to-have | cc-connect has an embedded web admin UI — expose as ClusterIP service for internal monitoring |
 
-**No forking is strictly required for initial deployment.** The Dockerfile is the only blocking item, and it's a standard Node.js containerization task. The @mention customization is desirable but not blocking.
+**No forking required.** cc-connect is configured entirely via `config.toml`. The only custom artifact is the container image.
 
 ---
 
@@ -498,19 +621,34 @@ Take a Proxmox snapshot of the `docker01` VM after successful deployment. This c
 
 | Option | Why Rejected |
 |---|---|
-| **Official Claude Code Channels Plugin** | No native multi-workspace. Requires N bots + N terminals for N workspaces. Research preview instability. Re-evaluate at GA |
-| **timoconnellaus/claude-code-discord-bot** | Single-user only. No Docker. No queue. 10+ months stale. Bun runtime adds operational complexity. Elegant concept but unmaintained |
-| **zebbern/claude-code-discord** | No native multi-workspace routing. Would require one bot instance per workspace — same N-instance problem as official plugin. Best for single-project use |
-| **chenhg5/cc-connect** | Overkill. 11 platforms, 10 agents, Go binary, Web UI. We need Claude Code on Discord, not a polyglot agent hub |
-| **ebibibi/claude-code-discord-bridge** | Python-based (different ops surface). Thread-per-session model doesn't match our channel-per-workspace requirement. Interesting for CI/CD integration but not our use case |
-| **New LXC on `prox0.local`** | Overkill for a single bot process. Introduces new deployment pattern (systemd in LXC vs. Docker Compose). No meaningful proximity benefit |
+| **Official Claude Code Channels Plugin** | No multi-workspace. No per-thread sessions. Requires N bots + N terminals. Research preview. Re-evaluate at GA |
+| **chadingTV/claudecode-discord** | **No per-thread sessions** (strict per-channel only). **SQLite breaks on NFS** — can't use the shared workspace NFS. Good channel-to-directory mapping but missing two hard requirements |
+| **timoconnellaus/claude-code-discord-bot** | No threads. Single user. No Docker. SQLite on NFS. 10+ months stale. Bun runtime |
+| **zebbern/claude-code-discord** | Has per-thread sessions but **no per-channel workspace binding** — channel is just an entry point, not a workspace anchor. Would need one instance per workspace |
+| **ebibibi/claude-code-discord-bridge** | Best worktree isolation, but **SQLite on NFS** is a blocker. Python ops surface (different from Go/Node stack). Only 41 stars |
+| **`docker01.local` as host** | Would need separate NFS mounts on the Docker VM to access the workspace. Different management plane (Docker Compose vs. ArgoCD). The k8s cluster already has the NFS PVCs provisioned |
+| **New LXC on `prox0.local`** | Third ops surface (systemd). No existing NFS PVC reuse. Overkill for a single bot process |
 
-## Appendix B: Future Considerations
+## Appendix B: Why cc-connect Was Initially Dismissed (and Why That Was Wrong)
 
-1. **Official plugin GA:** When Anthropic ships multi-workspace support for Claude Code Channels, re-evaluate migrating from chadingTV to the official solution. The official plugin's MCP bridge architecture (events pushed into a running session with full local context) is architecturally superior to spawning new sessions per message.
+The v1 evaluation dismissed cc-connect as "overkill — 11 platforms, 10 agents, Go binary, Web UI." This judgment had three errors:
 
-2. **cc-connect as a long-term hub:** If the homelab grows to include multiple AI agents (Codex, Gemini CLI, Cursor) across multiple platforms (Discord, Telegram, Slack), cc-connect's 7.7k-star Go binary becomes the natural convergence point. Monitor for Discord improvements.
+1. **"Overkill" is not a technical disqualifier.** cc-connect's multi-platform support is additive, not a tax. Unused platforms cost nothing at runtime. The Go binary is lighter than Node.js + SQLite.
 
-3. **Session TTL / turn limits:** Track chadingTV issue #4 (O(N²) token growth). If not resolved upstream, implement a cron job or Discord slash command (`/reset-session`) that clears sessions older than N turns.
+2. **The features cc-connect adds are exactly the ones needed.** Per-thread sessions (`thread_isolation`), multi-workspace mode, NFS-safe JSON storage, and per-project permission modes are all features that the Discord-only bots lack.
 
-4. **Monitoring:** After deployment, add a lightweight uptime check — e.g., a cron job that queries the bot's SQLite for the last activity timestamp, and alerts via Apprise if the bot hasn't processed a message in >1 hour during active hours.
+3. **Community matters.** 7,700 stars with 107 commits since the last release vs. 43 stars with 1 open issue. The bus factor and maintenance trajectory are incomparable.
+
+The lesson: evaluate tools by fit against requirements, not by whether they do "more than needed."
+
+## Appendix C: Future Considerations
+
+1. **Official plugin GA:** When Anthropic ships multi-workspace + thread support for Channels, re-evaluate. The MCP bridge architecture (events into a running session) is architecturally superior. But cc-connect's subprocess model is production-proven today.
+
+2. **Worktree isolation:** If concurrent same-workspace sessions become frequent, add automatic worktree creation. Options: (a) system prompt injection via `config.toml`, (b) fork cc-connect to add a pre-session hook, (c) monitor if cc-connect adds this natively.
+
+3. **Multi-agent expansion:** cc-connect supports Codex, Gemini CLI, Cursor, and others. If the homelab adds more AI agents, cc-connect becomes the unified hub without deploying new bots.
+
+4. **Telegram/Slack channels:** cc-connect supports Telegram and Slack out of the box. If you want workspace access from Telegram (e.g., for quick mobile commands), add a `[[projects.platforms]]` block with `type = "telegram"` — no new deployment needed.
+
+5. **Session TTL:** Monitor for long-running session token growth. cc-connect's 15-minute idle reaper helps, but active sessions can accumulate context. Use `/new` to start fresh sessions when context gets heavy.
