@@ -179,6 +179,17 @@ jobs:
           # HIGH,CRITICAL (LOW/MEDIUM noise is not worth gating on).
           exit-code: "0"
 
+      - name: 🔇 Filter Trivy SARIF (drop note-level findings)
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
+        run: |
+          set -euo pipefail
+          f="trivy-${{ matrix.variant }}.sarif"
+          before=$(jq '[.runs[].results[]] | length' "$f")
+          jq '(.runs[].results) |= map(select(.level != "note"))' "$f" > "$f.tmp"
+          mv "$f.tmp" "$f"
+          after=$(jq '[.runs[].results[]] | length' "$f")
+          echo "::notice::Trivy SARIF filter — kept $after of $before findings (dropped $((before - after)) note-level)"
+
       - name: 📤 Upload Trivy SARIF
         if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
         uses: github/codeql-action/upload-sarif@v4
