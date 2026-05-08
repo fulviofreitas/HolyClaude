@@ -99,6 +99,30 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       > /etc/apt/sources.list.d/github-cli.list && \
     apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
+# ---------- Chromium + GitHub CLI security patch ----------
+# Trivy post-Phase-2 re-scan exposed two alert clusters sharing the same
+# --only-upgrade fix idiom used for ImageMagick (Phase 1):
+#
+#   chromium / chromium-common: 250 alerts (2 critical, 3 high, ~245 note)
+#     installed 147.0.7727.137-1~deb12u1; fixed in 148.0.7778.96-1~deb12u1
+#     already in Debian Security (bookworm-security).
+#
+#   gh (/usr/bin/gh): ~8 note-severity alerts tracing to Go 1.26.2 stdlib
+#     CVEs; a newer build is already in cli.github.com/packages stable main.
+#
+# Placement: after the gh install block so BOTH apt sources (Debian Security
+# for chromium and cli.github.com/packages for gh) are already configured
+# when this layer runs. Splitting into two layers would add no benefit and
+# would double the apt-get update cost.
+#
+# Once node:24-bookworm-slim ships 148.x and a gh built on a patched Go
+# stdlib, this layer becomes a no-op and can be removed.
+RUN apt-get update && apt-get install -y --only-upgrade --no-install-recommends \
+    chromium \
+    chromium-common \
+    gh \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---------- bat symlink (Debian names it batcat) ----------
 RUN ln -sf /usr/bin/batcat /usr/local/bin/bat 2>/dev/null || true
 
