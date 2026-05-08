@@ -64,6 +64,29 @@
       datasourceTemplate: "github-releases",
       extractVersionTemplate: "^v?(?<version>.+)$",
     },
+    // npm — Dockerfile `RUN npm i -g npm@X.Y.Z`
+    // Pinned to fix transitive vulnerabilities (picomatch, brace-expansion,
+    // ip-address). Datasource is npm registry.
+    {
+      customType: "regex",
+      managerFilePatterns: ["(^|/)Dockerfile$"],
+      matchStrings: [
+        "RUN npm i -g npm@(?<currentValue>[0-9.]+)",
+      ],
+      depNameTemplate: "npm",
+      datasourceTemplate: "npm",
+    },
+    // pnpm — Dockerfile `pnpm@X.Y.Z` in the global install block
+    // Pinned to fix transitive vulnerabilities (ip-address).
+    {
+      customType: "regex",
+      managerFilePatterns: ["(^|/)Dockerfile$"],
+      matchStrings: [
+        "pnpm@(?<currentValue>[0-9.]+)",
+      ],
+      depNameTemplate: "pnpm",
+      datasourceTemplate: "npm",
+    },
   ],
 
   // ============================================================================

@@ -120,10 +120,13 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 USER root
 ENV PATH="/home/claude/.local/bin:${PATH}"
 
+# ---------- npm global upgrade (fix transitive vulnerabilities) ----------
+RUN npm i -g npm@11.14.0
+
 # ---------- npm global packages (slim — always installed) ----------
 RUN npm i -g \
     typescript tsx \
-    pnpm \
+    pnpm@11.0.8 \
     vite esbuild \
     eslint prettier \
     serve nodemon concurrently \
