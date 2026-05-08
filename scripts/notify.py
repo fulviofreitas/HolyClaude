@@ -49,6 +49,8 @@ def main():
             ap.add(url)
         ap.notify(title=title, body=body, notify_type=notify_type)
     except Exception:
+        # Notifications are best-effort: a failed Apprise send must never
+        # propagate up and fail the parent Claude tool invocation.
         pass
 
     sys.exit(0)
