@@ -1,0 +1,19 @@
+# Trivy CVE-ignore list — mirrors dismissed Code Scanning alerts.
+#
+# Each entry must also be dismissed on the Security tab with the same
+# justification, otherwise Trivy and GitHub Code Scanning go out of sync.
+# Format: one CVE ID per line; '#' starts a comment.
+#
+# Phase 2b — vendored @cloudcli-ai/cloudcli@1.31.5 (npm-latest, no upstream fix).
+# cloudcli-sync.yml will pull a future release that bumps these deps; remove
+# the corresponding line here when the fix lands.
+CVE-2026-41686  # @anthropic-ai/sdk 0.81.0 → 0.91.1 (in CloudCLI tree)
+CVE-2024-53382  # prismjs 1.27.0 → 1.30.0 (in CloudCLI refractor tree)
+
+# in-toto-golang — transitive Go dependency embedded in the GitHub CLI
+# binary at /usr/bin/gh. gh is already at the latest available release
+# from cli.github.com/packages (Phase 1c bumped it). The fix requires
+# upstream gh to rebuild against a patched in-toto-golang; we have no
+# in-image patch path. Will close when GitHub ships a new gh built on
+# the patched library.
+GHSA-pmwq-pjrm-6p5r  # github.com/in-toto/in-toto-golang in /usr/bin/gh
