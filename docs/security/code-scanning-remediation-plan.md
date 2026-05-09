@@ -401,3 +401,37 @@ gh api 'repos/fulviofreitas/HolyClaude/code-scanning/alerts?state=open&per_page=
 ```
 
 > Full unredacted JSON (1.5 MB) was saved during plan generation at `/tmp/open_alerts.json` on the working session host. Re-fetch with the `gh api` command above to refresh against the live GitHub Code Scanning state before each PR.
+---
+
+## Status update — 2026-05-09
+
+**Final state: 0 open alerts.**
+
+### Closure summary
+
+| Stream | Closed via | Alert count Δ |
+|---|---|---|
+| Phase 1 — imagemagick deb12u9 | PR #4 | −47 (incl. cache cascade) |
+| Phase 3 — CodeQL workflow + Trivy TODO | PR #5 | infrastructure |
+| CodeQL `py/empty-except` | PR #6 | −1 |
+| Phase 2 — npm@11.14.0 + pnpm@11.0.8 | PR #7 | −4 |
+| Phase 1c — chromium 148 + gh | PR #8 | −263 (5 actionable + 258 notes) |
+| Trivy SARIF note-filter | PR #9 | future-proofing |
+| Phase 3 — Trivy gate flip | PR #10 | gating |
+| Phase 2b — CloudCLI medium alerts | dismissed (upstream-blocked) | −2 |
+
+Tags `v1.3.0` → `v1.3.3` cut by semantic-release on each phase merge.
+
+### Phase 2b — accepted-risk record
+
+Two medium alerts (`#444 @anthropic-ai/sdk` CVE-2026-41686, `#33 prismjs` CVE-2024-53382) are baked into `vendor/artifacts/cloudcli-ai-cloudcli-1.31.5.tgz`. As of 2026-05-09, `1.31.5` IS the npm-latest of `@cloudcli-ai/cloudcli` — no upstream fix exists. Both alerts dismissed as `won't_fix` with reason "upstream-blocked"; the `cloudcli-sync.yml` workflow will pick up any future release that bumps the bundled deps, at which point the SARIF stops referencing these CVEs and the alerts close as fixed (dismissal stays as the audit trail).
+
+### Hardening posture after this round
+
+- Trivy gate is **blocking** on HIGH/CRITICAL with available fixes.
+- SARIF note-filter prevents UNKNOWN-severity Trivy noise from reaching the dashboard.
+- Branch protection requires `✅ ci-success`, strict mode on.
+- CodeQL workflow (Python) runs on push/PR/weekly.
+- Renovate tracks `npm`, `pnpm` (custom regex managers added in Phase 2), Dockerfile base image, `S6_OVERLAY_VERSION`, and GitHub Actions versions.
+- `cloudcli-sync.yml` daily-checks the vendored CloudCLI tarball.
+
