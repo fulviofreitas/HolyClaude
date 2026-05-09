@@ -230,11 +230,37 @@ Live state today (`gh pr list --state open`):
 
 ### 6e. `auto-merge.yml`
 
-Recently added (`732e0ab`). Risk: a green-check Phase 2 PR auto-merges before
-the reviewer has a chance to verify the §4 checklist (specifically the
-"no new `[patch] WARNING:` lines" item, which is **WARN**, not FAIL, in
-the smoke test). Recommendation: **mark each phase PR with `do-not-merge`
-or set `auto-merge: false` until the reviewer has eyeballed the build log**.
+Behaviour confirmed against runs from this remediation cycle (PRs #4–#10):
+
+- **Gate is opt-in via label.** The action only acts on PRs carrying the
+  `automerge` label (`merge-labels: "automerge"` in `auto-merge.yml:55`).
+  Blocking labels (`wip`, `do-not-merge`, `needs-review`) suppress it.
+  None of the security PRs in this cycle carried `automerge`, which is
+  why each one was driven by `gh pr merge` from the orchestrator instead.
+- **Auth uses the GitHub App, not the default `GITHUB_TOKEN`.** The
+  workflow passes `app-id: ${{ secrets.RENOVATE_APP_ID }}` and
+  `app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}` into
+  `fulviofreitas/workflow-arsenal/.github/actions/auto-merge@master`.
+  Both secrets are configured at the repo level (verify with
+  `gh secret list --repo fulviofreitas/HolyClaude`); the run log shows
+  them as `app-id: ***` / `app-private-key: ***` (masked-but-present).
+  The GitHub App is required because some auto-merged PRs touch workflow
+  files, which the default `GITHUB_TOKEN` cannot push.
+- **Don't be fooled by `"::error::No authentication provided…"` in the
+  step log.** That line is the *script source* of the action being
+  printed by GitHub Actions during the `##[group]Run` setup (look for
+  the `[36;1m…[0m` cyan-formatting wrappers around it). It's a branch of
+  the action's bash that only fires when neither auth method is provided.
+  In our runs auth IS provided, so that line never executes — the run
+  conclusion is `success` and the action exits cleanly without merging
+  whenever the PR lacks the `automerge` label.
+- **Recommended use going forward.** Add the `automerge` label only
+  after a human has eyeballed the build log for the §4 checklist items
+  that are WARN-not-FAIL in CI (notably "no new `[patch] WARNING:` lines"
+  from `scripts/ci/smoke-test.sh:158-171`). For Phase-2-style PRs that
+  touch the npm-globals install, prefer to drive the merge by hand from
+  the orchestrator until the smoke test gains a hard FAIL on missing
+  patches.
 
 ## 7. Phase 2 readiness checklist (forward-looking)
 
