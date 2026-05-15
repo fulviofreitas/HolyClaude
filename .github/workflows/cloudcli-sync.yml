@@ -186,8 +186,8 @@ jobs:
           branch: cloudcli-sync/${{ steps.target.outputs.version }}
           base: master
           commit-message: |
-            chore(cloudcli): bump @cloudcli-ai/cloudcli ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}
-          title: "chore(cloudcli): bump CloudCLI ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}"
+            feat(cloudcli): bump @cloudcli-ai/cloudcli ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}
+          title: "feat(cloudcli): bump CloudCLI ${{ steps.current.outputs.version }} -> ${{ steps.target.outputs.version }}"
           labels: |
             cloudcli-sync
             automated
