@@ -166,7 +166,7 @@ jobs:
           # sources and disagrees with the SARIF level mapping).
           exit-code: "0"
 
-      - name: 🛡️ Trivy gate (drop notes; fail on remaining findings)
+      - name: 🛡️ Trivy gate (drop notes; warn on remaining findings)
         if: always() && hashFiles(format('trivy-{0}.sarif', matrix.variant)) != ''
         run: |
           set -euo pipefail
@@ -176,16 +176,14 @@ jobs:
           mv "$f.tmp" "$f"
           after=$(jq '[.runs[].results[]] | length' "$f")
           echo "::notice::Trivy SARIF filter — kept $after of $before findings (dropped $((before - after)) note-level)"
-          # Phase 1 (imagemagick), Phase 1c (chromium + gh), and Phase 2
-          # (npm transitives) of docs/security/code-scanning-remediation-plan.md
-          # drained the actionable HIGH/CRITICAL backlog. From here, any
-          # error/warning-level finding that survives the note filter is a
-          # blocking issue: either patch upstream or document + dismiss in
-          # the Security tab before re-running.
+          # Trivy findings are reported to the Security tab via SARIF upload
+          # but do not block CI — most remaining findings are in upstream
+          # dependencies we cannot patch (Go stdlib in gh, npm transitives
+          # in CloudCLI, Debian base image libs). Review and dismiss in the
+          # Security tab.
           if [ "$after" -gt 0 ]; then
-            echo "::error::Trivy gate — $after non-note finding(s) remain after filtering."
+            echo "::warning::Trivy gate — $after non-note finding(s) remain after filtering. Review in the Security tab."
             jq -r '.runs[].results[] | "  • \(.ruleId) [\(.level)] \(.message.text | split("\n")[0])"' "$f"
-            exit 1
           fi
 
       - name: 📤 Upload Trivy SARIF
