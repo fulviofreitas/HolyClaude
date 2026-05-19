@@ -75,6 +75,19 @@ HolyClaude uses [Apprise](https://github.com/caronc/apprise) for notifications, 
 
 Notifications also require the flag file `~/.claude/notify-on` to exist inside the container. Create it with `touch ~/.claude/notify-on`.
 
+#### Notification Format
+
+Discord webhooks receive context-rich [embeds](https://discord.com/developers/docs/resources/message#embed-object) — task summary, files changed, tools used, duration, token usage, git branch, error details, and a suggested next step on failures. All other services receive the same information as enriched Markdown. Secrets, API keys, and credentials are redacted from every field before a notification is sent. Three events fire notifications: `stop` (task finished), `error` (tool-use failure), and `waiting` (input/permission needed).
+
+Two optional variables tune the output:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | `embed` — rich Discord embeds. `simple` — plain one-line message everywhere (the embed fallback path). |
+| `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | `minimal` — title + summary only. `standard` — full context. `verbose` — also adds the transcript path and full tool list. |
+
+If a rich embed is ever rejected by Discord (rate limiting, a malformed field), the script automatically retries as a plain-text message, so notifications are never lost. See [README → Notifications](../README.md#bell-notifications) for rendered embed examples per event type.
+
 **Migrating from Pushover (v1.0.0):** Replace `PUSHOVER_APP_TOKEN` and `PUSHOVER_USER_KEY` with a single variable: `NOTIFY_PUSHOVER=pover://user_key@app_token`
 
 ### AI Provider API Keys

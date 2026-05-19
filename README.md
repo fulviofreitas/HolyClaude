@@ -448,6 +448,9 @@ services:
       # - NOTIFY_GOTIFY=gotify://hostname/token
       # - NOTIFY_URLS=                                   # catch-all: comma-separated Apprise URLs
       #
+      # - HOLYCLAUDE_NOTIFY_STYLE=embed                  # embed (default) | simple
+      # - HOLYCLAUDE_NOTIFY_VERBOSITY=standard           # minimal | standard | verbose
+      #
       # AI PROVIDER KEYS (optional)
       # Claude Code can authenticate via web UI (OAuth) or ANTHROPIC_API_KEY.
       # Set these if you want to use additional AI CLIs or API-based auth.
@@ -513,6 +516,8 @@ The complete reference. Every variable, what it defaults to, what it does.
 | `NOTIFY_EMAIL` | *(unset)* | Email (SMTP) URL for notifications |
 | `NOTIFY_GOTIFY` | *(unset)* | Gotify URL for notifications |
 | `NOTIFY_URLS` | *(unset)* | Catch-all — comma-separated [Apprise URLs](https://github.com/caronc/apprise/wiki) |
+| `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | Notification format — `embed` (rich) or `simple` (plain text) |
+| `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | Notification detail — `minimal`, `standard`, or `verbose` |
 | `ANTHROPIC_API_KEY` | *(unset)* | Anthropic API key (alternative to web UI OAuth) |
 | `ANTHROPIC_AUTH_TOKEN` | *(unset)* | Anthropic auth token (alternative to API key, or set to `ollama` for Ollama) |
 | `ANTHROPIC_BASE_URL` | *(unset)* | Custom Anthropic API endpoint (proxies, private deployments, or Ollama's Anthropic-compatible API) |
@@ -919,7 +924,7 @@ Even with all that, the risk surface is huge. Use Tailscale or Cloudflare Tunnel
 
 ## :bell: Notifications
 
-Walk away from your computer and know when your AI agents are done. Claude Code, Codex, and Gemini CLI all send notifications when a task completes. Uses [Apprise](https://github.com/caronc/apprise) — supports 100+ services including Discord, Telegram, Slack, Email, Pushover, Gotify, and more.
+Walk away from your computer and know when your AI agents are done. Claude Code, Codex, and Gemini CLI all send notifications on key events. Uses [Apprise](https://github.com/caronc/apprise) — supports 100+ services including Discord, Telegram, Slack, Email, Pushover, Gotify, and more.
 
 **To enable:**
 
@@ -935,10 +940,108 @@ See [configuration docs](docs/configuration.md#notifications-apprise) for all su
 **To disable:** `rm ~/.claude/notify-on`
 
 **Events that trigger notifications:**
-| Event | What happened |
-|-------|--------------|
-| `stop` | Claude Code, Codex, or Gemini finished the current task |
-| `error` | A tool use failure occurred |
+| Event | What happened | Hook |
+|-------|--------------|------|
+| `stop` | Claude Code, Codex, or Gemini finished the current task | `Stop` |
+| `error` | A tool-use failure occurred | `PostToolUseFailure` |
+| `waiting` | Claude needs your input or a permission decision | `Notification` |
+
+### What's in a notification
+
+Notifications are **context-aware**, not generic. For Discord webhooks they are sent as native rich [embeds](https://discord.com/developers/docs/resources/message#embed-object); every other service receives the same information as an enriched Markdown message.
+
+- **Task complete** — green embed with the task title, your original prompt, a summary of what was done, files changed, tools used, duration, token usage, model, working directory, git branch, and session ID.
+- **Tool failure** — red embed with the failing tool, the (truncated) tool input, the full error, the prompt that led to it, working directory, git branch, and a suggested next step.
+- **Waiting** — yellow embed with the permission/idle message, working directory, git branch, and session ID.
+
+Each embed is colour-coded (🟢 success · 🔴 error · 🟡 waiting), carries a footer timestamp, and is truncated gracefully to stay within Discord's limits (4096-char description, 1024 per field, 6000 total). If a rich embed is ever rejected (rate-limit, API change) the script automatically falls back to a plain-text message.
+
+<details>
+<summary><strong>Rendered embed examples</strong> (the JSON posted to the Discord webhook)</summary>
+
+**`stop` — task complete** (green, `color: 3066993`):
+```json
+{
+  "username": "HolyClaude",
+  "embeds": [{
+    "title": "✅ Add dark-mode toggle",
+    "description": "Added the toggle to the settings page, persisted the choice, and wrote two tests.",
+    "color": 3066993,
+    "author": { "name": "HolyClaude · claude-opus-4-7" },
+    "fields": [
+      { "name": "📂 Directory", "value": "`demo`", "inline": true },
+      { "name": "🌿 Branch", "value": "`feature/dark-mode`", "inline": true },
+      { "name": "⏱️ Duration", "value": "3m 34s", "inline": true },
+      { "name": "🔧 Tools", "value": "6 calls — Bash ×3, Edit ×2, Read ×1", "inline": true },
+      { "name": "🧮 Tokens", "value": "≈4,210 out · ≈81,233 context", "inline": true },
+      { "name": "🤖 Model", "value": "`claude-opus-4-7`", "inline": true },
+      { "name": "📝 Prompt", "value": "Add a dark-mode toggle to the settings page." },
+      { "name": "📄 Files changed (2)", "value": "• `ui/settings.tsx`\n• `ui/theme.ts`" },
+      { "name": "🧵 Session", "value": "`sess-abc123`" }
+    ],
+    "footer": { "text": "HolyClaude · task complete" },
+    "timestamp": "2026-05-19T18:24:07+00:00"
+  }]
+}
+```
+
+**`error` — tool failure** (red, `color: 15158332`):
+```json
+{
+  "username": "HolyClaude",
+  "embeds": [{
+    "title": "❌ Tool failure — Edit",
+    "description": "```\nString to replace not found in file.\n```",
+    "color": 15158332,
+    "author": { "name": "HolyClaude" },
+    "fields": [
+      { "name": "🔧 Tool", "value": "`Edit`", "inline": true },
+      { "name": "📂 Directory", "value": "`demo`", "inline": true },
+      { "name": "🌿 Branch", "value": "`main`", "inline": true },
+      { "name": "⏱️ Ran for", "value": "4s", "inline": true },
+      { "name": "🧾 Tool input", "value": "```json\n{\n  \"file_path\": \"app.py\",\n  \"old_string\": \"foo\"\n}\n```" },
+      { "name": "📝 Prompt", "value": "Fix the failing import." },
+      { "name": "💡 Suggested next step", "value": "The target text changed — re-read the file, then redo the edit." },
+      { "name": "🧵 Session", "value": "`sess-err99`" }
+    ],
+    "footer": { "text": "HolyClaude · tool failure" },
+    "timestamp": "2026-05-19T18:31:55+00:00"
+  }]
+}
+```
+
+**`waiting` — input/permission needed** (yellow, `color: 15844367`):
+```json
+{
+  "username": "HolyClaude",
+  "embeds": [{
+    "title": "⏳ Permission needed",
+    "description": "Claude needs your permission to use Bash",
+    "color": 15844367,
+    "author": { "name": "HolyClaude" },
+    "fields": [
+      { "name": "📂 Directory", "value": "`demo`", "inline": true },
+      { "name": "🌿 Branch", "value": "`main`", "inline": true },
+      { "name": "🧵 Session", "value": "`sess-wait1`" }
+    ],
+    "footer": { "text": "HolyClaude · waiting" },
+    "timestamp": "2026-05-19T18:40:12+00:00"
+  }]
+}
+```
+
+</details>
+
+### Tuning the output
+
+Two optional environment variables control how much detail each notification carries:
+
+| Variable | Default | Values | Effect |
+|----------|---------|--------|--------|
+| `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | `embed`, `simple` | `simple` skips rich embeds and sends a plain one-line message everywhere |
+| `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | `minimal`, `standard`, `verbose` | `minimal` = title + summary only; `verbose` adds the transcript path, longer prompt/summary, and full tool list |
+
+**Privacy:** secrets, API keys, tokens, and credentials are redacted from every field — prompt, summary, tool input, error text — before a notification leaves the container.
 
 > Completely silent when not configured. No `NOTIFY_*` vars set? No flag file? Zero network calls. Zero log spam. Zero overhead.
 
