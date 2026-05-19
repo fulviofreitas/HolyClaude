@@ -26,6 +26,16 @@
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/notify.py waiting"
+          }
+        ]
+      }
     ]
   }
 }

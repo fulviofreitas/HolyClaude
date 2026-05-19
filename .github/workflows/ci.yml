@@ -96,6 +96,10 @@ jobs:
               document-start: disable
               indentation: { spaces: 2, indent-sequences: consistent }
 
+      # notify.py builds the Discord embeds — pure stdlib, no install needed.
+      - name: 🐍 Notify unit tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
   # ===========================================================================
   # 2️⃣ build-and-smoke — gate 2 (parallel with lint)
   # ===========================================================================
