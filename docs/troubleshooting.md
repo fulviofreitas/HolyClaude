@@ -117,16 +117,6 @@ Never delete the entire `./data/claude/` directory — this wipes your credentia
 
 ---
 
-### Claude Code installer hangs during build
-
-**Symptom:** `curl -fsSL https://claude.ai/install.sh | bash` hangs indefinitely during `docker build`.
-
-**Cause:** Installer prompts or behaves differently when WORKDIR is root-owned.
-
-**Fix:** Already handled in the Dockerfile — `WORKDIR /workspace` and `USER claude` are set before the installer runs.
-
----
-
 ### Bootstrap doesn't re-run after image update
 
 **Symptom:** New settings/memory from updated image aren't applied.

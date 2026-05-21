@@ -71,12 +71,12 @@ done
 
 echo "==> CLI version checks"
 fail=0
-# claude and cursor-agent live under the claude user's ~/.local/bin which
-# the Dockerfile prepends to PATH via ENV. docker-exec's PATH is preserved
-# but the binaries themselves run with whatever HOME we give them; keep
-# absolute paths so the test does not rely on PATH ordering.
+# claude is installed via `npm install -g` at /usr/local/bin (a system path
+# baked into the image, outside any runtime volume mount). cursor-agent still
+# lives under the claude user's ~/.local/bin, which the Dockerfile prepends to
+# PATH via ENV. Keep absolute paths so the test does not rely on PATH ordering.
 for spec in \
-  "claude:/home/claude/.local/bin/claude --version" \
+  "claude:/usr/local/bin/claude --version" \
   "gemini:gemini --version" \
   "codex:codex --version" \
   "cursor-agent:/home/claude/.local/bin/cursor-agent --version" \
