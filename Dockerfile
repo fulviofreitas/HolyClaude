@@ -136,12 +136,20 @@ RUN usermod -l claude -d /home/claude -m node && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
     chmod 0440 /etc/sudoers.d/claude
 
-# ---------- Claude Code CLI (native installer) ----------
-# CRITICAL: WORKDIR must be non-root-owned or the installer hangs
+# ---------- Claude Code CLI ----------
+# Install at /usr/local/bin — a system PATH dir OUTSIDE the /home/claude
+# shared PVC. The native installer (curl https://claude.ai/install.sh) lands
+# the binary in ~/.local/bin; once a shared volume mounts over /home/claude
+# at runtime that path is masked, leaving CloudCLI's bundled
+# @anthropic-ai/claude-agent-sdk — which raw-spawns the bare name "claude" —
+# unable to resolve it ("native binary not found at claude"). A system-path
+# install survives the volume mount. Version pinned to the latest release.
 WORKDIR /workspace
-USER claude
-RUN curl -fsSL https://claude.ai/install.sh | bash
-USER root
+ARG CLAUDE_CODE_VERSION=2.1.146
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+# ~/.local/bin stays on PATH for tools that only install there (cursor-agent,
+# junie). Those live inside the shared PVC; the claude binary above does not.
 ENV PATH="/home/claude/.local/bin:${PATH}"
 
 # ---------- npm global upgrade (fix transitive vulnerabilities) ----------
