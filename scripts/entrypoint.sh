@@ -98,6 +98,15 @@ if [ ! -f "$SENTINEL" ]; then
     fi
 fi
 
+# ---------- Seed CloudCLI plugins (every boot) ----------
+# cloudcli's plugin dir (~/.claude-code-ui/plugins) lives inside the shared
+# PVC, which masks image-baked plugins. seed-plugins.sh copies the pre-built
+# bundled plugins onto the PVC and compiles any user-added plugin missing its
+# dist/. Best-effort — must not block startup.
+if ! /usr/local/bin/seed-plugins.sh; then
+    echo "[entrypoint] WARNING: seed-plugins.sh failed — continuing anyway"
+fi
+
 # ---------- Background: persist ~/.claude.json every 60s ----------
 (while true; do
     sleep 60

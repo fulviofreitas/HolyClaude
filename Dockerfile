@@ -278,17 +278,23 @@ RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/asse
     echo "[patch] bundle custom model select option applied" || \
     echo "[patch] WARNING: bundle custom model select pattern not found, skipping patch"
 
-# ---------- CloudCLI plugins (baked into image) ----------
-USER claude
-RUN mkdir -p /home/claude/.claude-code-ui/plugins && \
-    git clone --depth 1 https://github.com/cloudcli-ai/cloudcli-plugin-starter.git /home/claude/.claude-code-ui/plugins/project-stats && \
-    npm --prefix /home/claude/.claude-code-ui/plugins/project-stats install && \
-    npm --prefix /home/claude/.claude-code-ui/plugins/project-stats run build && \
-    git clone --depth 1 https://github.com/cloudcli-ai/cloudcli-plugin-terminal.git /home/claude/.claude-code-ui/plugins/web-terminal && \
-    npm --prefix /home/claude/.claude-code-ui/plugins/web-terminal install && \
-    npm --prefix /home/claude/.claude-code-ui/plugins/web-terminal run build && \
-    echo '{"project-stats":{"name":"project-stats","source":"https://github.com/cloudcli-ai/cloudcli-plugin-starter","enabled":true},"web-terminal":{"name":"web-terminal","source":"https://github.com/cloudcli-ai/cloudcli-plugin-terminal","enabled":true}}' > /home/claude/.claude-code-ui/plugins.json
-USER root
+# ---------- CloudCLI plugins (staged outside the home) ----------
+# cloudcli hard-codes its plugin dir to ~/.claude-code-ui/plugins. In the
+# k8s deployment a shared PVC mounts over /home/claude and masks anything
+# baked there, so plugins installed into the home at build time are invisible
+# at runtime — the dir-scan finds only stale source-only copies migrated onto
+# the PVC and every plugin fails with `dist/server.js` MODULE_NOT_FOUND.
+# Build the bundled plugins (compiled `dist/` + node_modules) into an image
+# staging dir instead; entrypoint.sh -> seed-plugins.sh copies them into the
+# PVC on every boot. See ff-k8s docs/reference/lessons-learned.md.
+RUN mkdir -p /usr/local/share/holyclaude/plugins && \
+    git clone --depth 1 https://github.com/cloudcli-ai/cloudcli-plugin-starter.git /usr/local/share/holyclaude/plugins/project-stats && \
+    npm --prefix /usr/local/share/holyclaude/plugins/project-stats install && \
+    npm --prefix /usr/local/share/holyclaude/plugins/project-stats run build && \
+    git clone --depth 1 https://github.com/cloudcli-ai/cloudcli-plugin-terminal.git /usr/local/share/holyclaude/plugins/web-terminal && \
+    npm --prefix /usr/local/share/holyclaude/plugins/web-terminal install && \
+    npm --prefix /usr/local/share/holyclaude/plugins/web-terminal run build && \
+    rm -rf /usr/local/share/holyclaude/plugins/*/.git
 
 # ---------- Store variant for bootstrap ----------
 RUN echo "${VARIANT}" > /etc/holyclaude-variant
@@ -296,12 +302,14 @@ RUN echo "${VARIANT}" > /etc/holyclaude-variant
 # ---------- Copy config files ----------
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/bootstrap.sh /usr/local/bin/bootstrap.sh
+COPY scripts/seed-plugins.sh /usr/local/bin/seed-plugins.sh
 COPY scripts/notify.py /usr/local/bin/notify.py
 COPY config/settings.json /usr/local/share/holyclaude/settings.json
 COPY config/claude-memory-full.md /usr/local/share/holyclaude/claude-memory-full.md
 COPY config/claude-memory-slim.md /usr/local/share/holyclaude/claude-memory-slim.md
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/bin/bootstrap.sh \
+    /usr/local/bin/seed-plugins.sh \
     /usr/local/bin/notify.py
 
 # ---------- s6-overlay service definitions ----------
