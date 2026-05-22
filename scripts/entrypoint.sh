@@ -82,7 +82,39 @@ elif [ -f "$CLAUDE_HOME/.claude/.claude.json.persist" ]; then
     cp "$CLAUDE_HOME/.claude/.claude.json.persist" "$CLAUDE_HOME/.claude.json"
     chown "$PUID:$PGID" "$CLAUDE_HOME/.claude.json"
 else
-    echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > "$CLAUDE_HOME/.claude.json"
+    echo '{"hasCompletedOnboarding":true,"installMethod":"npm-global"}' > "$CLAUDE_HOME/.claude.json"
+    chown "$PUID:$PGID" "$CLAUDE_HOME/.claude.json"
+fi
+
+# ---------- Reconcile stale installMethod (every boot) ----------
+# Since v1.5.1, Claude Code is installed via `npm i -g` at /usr/local/bin.
+# Homes carried over on the persistent PVC may still hold the pre-v1.5.1
+# installMethod="native" (native-installer era). Claude Code reads that key
+# but never rewrites it, so `claude doctor` warns "installMethod is native,
+# but claude not found at ~/.local/bin/claude". Idempotently correct it to
+# match the real install. Runs before s6/cloudcli start, so no claude process
+# is live to clobber the write. Best-effort — never aborts startup.
+if [ -f "$CLAUDE_HOME/.claude.json" ]; then
+    python3 - "$CLAUDE_HOME/.claude.json" <<'PYEOF' || echo "[entrypoint] WARNING: installMethod reconcile skipped"
+import json, os, sys
+p = sys.argv[1]
+try:
+    with open(p) as f:
+        d = json.load(f)
+except Exception as e:
+    print(f"[entrypoint] .claude.json not parseable ({e}); leaving installMethod as-is")
+    sys.exit(0)
+if d.get("installMethod") != "npm-global":
+    old = d.get("installMethod")
+    d["installMethod"] = "npm-global"
+    tmp = p + f".tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, p)
+    print(f"[entrypoint] reconciled installMethod {old!r} -> 'npm-global'")
+else:
+    print("[entrypoint] installMethod already 'npm-global'")
+PYEOF
     chown "$PUID:$PGID" "$CLAUDE_HOME/.claude.json"
 fi
 
