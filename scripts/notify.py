@@ -277,9 +277,9 @@ def parse_transcript(path):
     an empty/partial dict. Never raises.
     """
     info = {
-        "prompt": "", "summary": "", "model": "", "branch": "", "cwd": "",
-        "tools": [], "files": [], "tokens_out": 0, "tokens_ctx": 0,
-        "duration": None, "title": "",
+        "prompt": "", "last_prompt": "", "summary": "", "model": "",
+        "branch": "", "cwd": "", "tools": [], "files": [],
+        "tokens_out": 0, "tokens_ctx": 0, "duration": None, "title": "",
     }
     if not path:
         return info
@@ -331,10 +331,12 @@ def parse_transcript(path):
 
         message = entry.get("message")
         if etype == "user":
-            if not info["prompt"]:
-                text = _message_text(message)
-                if _looks_like_prompt(text):
-                    info["prompt"] = text.strip()
+            text = _message_text(message)
+            if _looks_like_prompt(text):
+                cleaned = text.strip()
+                if not info["prompt"]:
+                    info["prompt"] = cleaned
+                info["last_prompt"] = cleaned
         elif etype == "assistant" and isinstance(message, dict):
             if message.get("model"):
                 info["model"] = str(message.get("model"))
@@ -437,6 +439,7 @@ def build_context(event, hook):
         "model": tx.get("model") or "",
         "permission_mode": hook.get("permission_mode") or "",
         "prompt": tx.get("prompt") or "",
+        "last_prompt": tx.get("last_prompt") or tx.get("prompt") or "",
         "summary": hook.get("last_assistant_message") or tx.get("summary") or "",
         "title": tx.get("title") or "",
         "tools": tx.get("tools") or [],
@@ -557,8 +560,11 @@ def build_embed(event, ctx, verbosity="standard"):
             add("🧾 Tool input",
                 code_block(_stringify(ctx.get("tool_input")), budget["tool_input"],
                            lang="json"))
-        if budget["prompt"] and ctx.get("prompt"):
-            add("📝 Prompt", redact(truncate(ctx["prompt"], budget["prompt"])))
+        if budget["prompt"]:
+            last_prompt = ctx.get("last_prompt") or ctx.get("prompt")
+            if last_prompt:
+                add("🗣️ You asked",
+                    redact(truncate(last_prompt, budget["prompt"])))
         add("💡 Suggested next step",
             suggest_next_step(ctx.get("tool_name"), ctx.get("error")))
         _add_session(add, ctx, budget)
@@ -597,8 +603,16 @@ def build_embed(event, ctx, verbosity="standard"):
             add("🧮 Tokens", tokens, inline=True)
             add("🤖 Model", "`{}`".format(ctx["model"]) if ctx.get("model") else "",
                 inline=True)
-        if budget["prompt"] and ctx.get("prompt"):
-            add("📝 Prompt", redact(truncate(ctx["prompt"], budget["prompt"])))
+        if budget["prompt"]:
+            last_prompt = ctx.get("last_prompt") or ctx.get("prompt")
+            if last_prompt:
+                add("🗣️ You asked",
+                    redact(truncate(last_prompt, budget["prompt"])))
+            first_prompt = ctx.get("prompt")
+            if (budget["extras"] and first_prompt
+                    and first_prompt != last_prompt):
+                add("📜 Session started with",
+                    redact(truncate(first_prompt, budget["prompt"])))
         if budget["files"] and ctx.get("files"):
             add("📄 Files changed ({})".format(len(ctx["files"])),
                 _files_value(ctx["files"], budget["files"], cwd))
@@ -734,8 +748,11 @@ def build_text(event, ctx, verbosity="standard"):
                            ("Branch", ctx.get("branch"))])
         if meta:
             lines.append(meta)
-        if budget["prompt"] and ctx.get("prompt"):
-            lines.append("**Prompt:** " + redact(truncate(ctx["prompt"], budget["prompt"])))
+        if budget["prompt"]:
+            last_prompt = ctx.get("last_prompt") or ctx.get("prompt")
+            if last_prompt:
+                lines.append("**You asked:** "
+                             + redact(truncate(last_prompt, budget["prompt"])))
         lines.append("**Next:** " + suggest_next_step(ctx.get("tool_name"),
                                                       ctx.get("error")))
     elif event == "waiting":
@@ -759,8 +776,16 @@ def build_text(event, ctx, verbosity="standard"):
             lines.append(meta)
         if budget["tools"] and ctx.get("tools"):
             lines.append("**Tools:** " + _tools_value(ctx["tools"], budget["extras"]))
-        if budget["prompt"] and ctx.get("prompt"):
-            lines.append("**Prompt:** " + redact(truncate(ctx["prompt"], budget["prompt"])))
+        if budget["prompt"]:
+            last_prompt = ctx.get("last_prompt") or ctx.get("prompt")
+            if last_prompt:
+                lines.append("**You asked:** "
+                             + redact(truncate(last_prompt, budget["prompt"])))
+            first_prompt = ctx.get("prompt")
+            if (budget["extras"] and first_prompt
+                    and first_prompt != last_prompt):
+                lines.append("**Session started with:** "
+                             + redact(truncate(first_prompt, budget["prompt"])))
         if budget["files"] and ctx.get("files"):
             lines.append("**Files changed ({}):**".format(len(ctx["files"])))
             lines.append(_files_value(ctx["files"], budget["files"], cwd))

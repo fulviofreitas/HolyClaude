@@ -950,8 +950,8 @@ See [configuration docs](docs/configuration.md#notifications-apprise) for all su
 
 Notifications are **context-aware**, not generic. For Discord webhooks they are sent as native rich [embeds](https://discord.com/developers/docs/resources/message#embed-object); every other service receives the same information as an enriched Markdown message.
 
-- **Task complete** — green embed with the task title, your original prompt, a summary of what was done, files changed, tools used, duration, token usage, model, working directory, git branch, and session ID.
-- **Tool failure** — red embed with the failing tool, the (truncated) tool input, the full error, the prompt that led to it, working directory, git branch, and a suggested next step.
+- **Task complete** — green embed with the task title, **your last prompt** (the one Claude just answered), a summary of what was done, files changed, tools used, duration, token usage, model, working directory, git branch, and session ID. On `verbose`, the session's *original* prompt is shown as well when it differs.
+- **Tool failure** — red embed with the failing tool, the (truncated) tool input, the full error, **the last prompt that led to it**, working directory, git branch, and a suggested next step.
 - **Waiting** — yellow embed with the permission/idle message, working directory, git branch, and session ID.
 
 Each embed is colour-coded (🟢 success · 🔴 error · 🟡 waiting), carries a footer timestamp, and is truncated gracefully to stay within Discord's limits (4096-char description, 1024 per field, 6000 total). If a rich embed is ever rejected (rate-limit, API change) the script automatically falls back to a plain-text message.
@@ -975,7 +975,7 @@ Each embed is colour-coded (🟢 success · 🔴 error · 🟡 waiting), carries
       { "name": "🔧 Tools", "value": "6 calls — Bash ×3, Edit ×2, Read ×1", "inline": true },
       { "name": "🧮 Tokens", "value": "≈4,210 out · ≈81,233 context", "inline": true },
       { "name": "🤖 Model", "value": "`claude-opus-4-7`", "inline": true },
-      { "name": "📝 Prompt", "value": "Add a dark-mode toggle to the settings page." },
+      { "name": "🗣️ You asked", "value": "Also persist the choice to localStorage." },
       { "name": "📄 Files changed (2)", "value": "• `ui/settings.tsx`\n• `ui/theme.ts`" },
       { "name": "🧵 Session", "value": "`sess-abc123`" }
     ],
@@ -1000,7 +1000,7 @@ Each embed is colour-coded (🟢 success · 🔴 error · 🟡 waiting), carries
       { "name": "🌿 Branch", "value": "`main`", "inline": true },
       { "name": "⏱️ Ran for", "value": "4s", "inline": true },
       { "name": "🧾 Tool input", "value": "```json\n{\n  \"file_path\": \"app.py\",\n  \"old_string\": \"foo\"\n}\n```" },
-      { "name": "📝 Prompt", "value": "Fix the failing import." },
+      { "name": "🗣️ You asked", "value": "Fix the failing import." },
       { "name": "💡 Suggested next step", "value": "The target text changed — re-read the file, then redo the edit." },
       { "name": "🧵 Session", "value": "`sess-err99`" }
     ],
@@ -1039,7 +1039,7 @@ Two optional environment variables control how much detail each notification car
 | Variable | Default | Values | Effect |
 |----------|---------|--------|--------|
 | `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | `embed`, `simple` | `simple` skips rich embeds and sends a plain one-line message everywhere |
-| `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | `minimal`, `standard`, `verbose` | `minimal` = title + summary only; `verbose` adds the transcript path, longer prompt/summary, and full tool list |
+| `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | `minimal`, `standard`, `verbose` | `minimal` = title + summary only; `verbose` adds the transcript path, longer prompt/summary, the full tool list, and the session's original prompt when it differs from the last one |
 
 **Privacy:** secrets, API keys, tokens, and credentials are redacted from every field — prompt, summary, tool input, error text — before a notification leaves the container.
 

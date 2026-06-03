@@ -252,6 +252,7 @@ class TestStopEmbed(unittest.TestCase):
         embed = notify.build_embed("stop", stop_ctx(), "minimal")
         names = " ".join(f["name"] for f in embed["fields"])
         self.assertNotIn("Prompt", names)
+        self.assertNotIn("You asked", names)
         self.assertNotIn("Files changed", names)
         assert_within_discord_limits(self, embed)
 
@@ -463,6 +464,120 @@ class TestBuildText(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+
+class TestPromptAnswerPairing(unittest.TestCase):
+    """The Prompt field on the notification must reflect the LAST user turn —
+    not the first one from the session — so it pairs with the answer that is
+    rendered in the description."""
+
+    def _write_transcript(self, lines):
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for entry in lines:
+                handle.write(json.dumps(entry) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def _user(self, text):
+        return {"type": "user", "message": {"role": "user", "content": text}}
+
+    def _assistant(self, text):
+        return {"type": "assistant",
+                "message": {"role": "assistant", "model": "claude-opus-4-7",
+                            "content": [{"type": "text", "text": text}]}}
+
+    def _tool_result(self):
+        # tool_result on a "user" entry must NOT be treated as a prompt.
+        return {"type": "user",
+                "message": {"role": "user",
+                            "content": [{"type": "tool_result",
+                                          "tool_use_id": "x", "content": "ok"}]}}
+
+    def test_multi_turn_picks_last_prompt(self):
+        path = self._write_transcript([
+            self._user("Add dark-mode toggle to settings."),
+            self._assistant("Done — added the toggle."),
+            self._user("Also persist the choice to localStorage."),
+            self._assistant("Persisted, with a test."),
+        ])
+        info = notify.parse_transcript(path)
+        self.assertEqual(info["prompt"], "Add dark-mode toggle to settings.")
+        self.assertEqual(info["last_prompt"],
+                          "Also persist the choice to localStorage.")
+        self.assertEqual(info["summary"], "Persisted, with a test.")
+
+    def test_single_turn_first_equals_last(self):
+        path = self._write_transcript([
+            self._user("Run the test suite."),
+            self._assistant("All green."),
+        ])
+        info = notify.parse_transcript(path)
+        self.assertEqual(info["prompt"], "Run the test suite.")
+        self.assertEqual(info["last_prompt"], info["prompt"])
+
+    def test_tool_results_do_not_pollute_last_prompt(self):
+        path = self._write_transcript([
+            self._user("First real prompt."),
+            self._assistant("Working..."),
+            self._tool_result(),         # synthetic tool_result user entry
+            self._tool_result(),
+            self._assistant("Done."),
+        ])
+        info = notify.parse_transcript(path)
+        self.assertEqual(info["prompt"], "First real prompt.")
+        self.assertEqual(info["last_prompt"], "First real prompt.")
+
+    def test_build_context_falls_back_to_first_prompt(self):
+        # No transcript → last_prompt should mirror prompt (which may also be
+        # empty) so embed rendering picks something sensible.
+        ctx = notify.build_context("stop", {"session_id": "s"})
+        self.assertEqual(ctx["last_prompt"], ctx["prompt"])
+
+    def test_stop_embed_shows_last_prompt_label(self):
+        ctx = stop_ctx(prompt="ORIGINAL",
+                       last_prompt="LATEST QUESTION FROM USER")
+        embed = notify.build_embed("stop", ctx, "standard")
+        asked = [f for f in embed["fields"] if "You asked" in f["name"]]
+        self.assertTrue(asked, "stop embed must include the You asked field")
+        self.assertIn("LATEST QUESTION FROM USER", asked[0]["value"])
+        # On standard verbosity the session-origin prompt is NOT shown.
+        self.assertFalse(
+            any("Session started with" in f["name"] for f in embed["fields"]))
+
+    def test_stop_embed_verbose_shows_session_origin_when_different(self):
+        ctx = stop_ctx(prompt="ORIGINAL ASK",
+                       last_prompt="FOLLOW-UP ASK")
+        embed = notify.build_embed("stop", ctx, "verbose")
+        origin = [f for f in embed["fields"]
+                  if "Session started with" in f["name"]]
+        self.assertTrue(origin, "verbose embed should expose the origin prompt")
+        self.assertIn("ORIGINAL ASK", origin[0]["value"])
+
+    def test_stop_embed_verbose_omits_session_origin_when_identical(self):
+        ctx = stop_ctx(prompt="SAME", last_prompt="SAME")
+        embed = notify.build_embed("stop", ctx, "verbose")
+        self.assertFalse(
+            any("Session started with" in f["name"] for f in embed["fields"]))
+
+    def test_error_embed_uses_last_prompt(self):
+        ctx = error_ctx(prompt="ORIGINAL", last_prompt="LATEST FAIL TRIGGER")
+        embed = notify.build_embed("error", ctx, "standard")
+        asked = [f for f in embed["fields"] if "You asked" in f["name"]]
+        self.assertTrue(asked)
+        self.assertIn("LATEST FAIL TRIGGER", asked[0]["value"])
+
+    def test_build_text_uses_last_prompt(self):
+        ctx = stop_ctx(prompt="ORIGINAL", last_prompt="LATEST")
+        text = notify.build_text("stop", ctx, "standard")
+        self.assertIn("LATEST", text)
+        self.assertIn("You asked:", text)
+
+    def test_build_text_verbose_includes_session_origin(self):
+        ctx = stop_ctx(prompt="ORIGINAL", last_prompt="LATEST")
+        text = notify.build_text("stop", ctx, "verbose")
+        self.assertIn("Session started with:", text)
+
 
 class TestConfigKnobs(unittest.TestCase):
 
