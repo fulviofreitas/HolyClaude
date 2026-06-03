@@ -450,6 +450,9 @@ services:
       #
       # - HOLYCLAUDE_NOTIFY_STYLE=embed                  # embed (default) | simple
       # - HOLYCLAUDE_NOTIFY_VERBOSITY=standard           # minimal | standard | verbose
+      # - HOLYCLAUDE_NOTIFY_SESSION_URL=                 # optional — turns the Session id into a clickable link.
+      #                                                  # Placeholders: {session_id} {project} {project_slug} {cwd} {branch} {transcript_path}
+      #                                                  # e.g. https://my-host:3001/session/{session_id}
       #
       # AI PROVIDER KEYS (optional)
       # Claude Code can authenticate via web UI (OAuth) or ANTHROPIC_API_KEY.
@@ -518,6 +521,7 @@ The complete reference. Every variable, what it defaults to, what it does.
 | `NOTIFY_URLS` | *(unset)* | Catch-all — comma-separated [Apprise URLs](https://github.com/caronc/apprise/wiki) |
 | `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | Notification format — `embed` (rich) or `simple` (plain text) |
 | `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | Notification detail — `minimal`, `standard`, or `verbose` |
+| `HOLYCLAUDE_NOTIFY_SESSION_URL` | *(unset)* | Optional URL template — turns `🧵 Session` into a clickable link. Placeholders: `{session_id}`, `{project}`, `{project_slug}`, `{cwd}`, `{branch}`, `{transcript_path}` |
 | `ANTHROPIC_API_KEY` | *(unset)* | Anthropic API key (alternative to web UI OAuth) |
 | `ANTHROPIC_AUTH_TOKEN` | *(unset)* | Anthropic auth token (alternative to API key, or set to `ollama` for Ollama) |
 | `ANTHROPIC_BASE_URL` | *(unset)* | Custom Anthropic API endpoint (proxies, private deployments, or Ollama's Anthropic-compatible API) |
@@ -978,7 +982,7 @@ Each embed is colour-coded (🟢 success · 🔴 error · 🟡 waiting), carries
       { "name": "🗣️ You asked", "value": "Also persist the choice to localStorage." },
       { "name": "🤖 Claude replied", "value": "Added the toggle to the settings page, persisted the choice, and wrote two tests." },
       { "name": "📄 Files changed (2)", "value": "• `ui/settings.tsx`\n• `ui/theme.ts`" },
-      { "name": "🧵 Session", "value": "`sess-abc123`" }
+      { "name": "🧵 Session", "value": "[`sess-abc123`](https://my-host:3001/session/sess-abc123)" }
     ],
     "footer": { "text": "HolyClaude · task complete" },
     "timestamp": "2026-05-19T18:24:07+00:00"

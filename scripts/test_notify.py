@@ -617,6 +617,92 @@ class TestPromptAnswerPairing(unittest.TestCase):
         self.assertIn("Done and tested.", text)
 
 
+class TestSessionUrl(unittest.TestCase):
+    """HOLYCLAUDE_NOTIFY_SESSION_URL turns the session-id into a clickable
+    markdown link in both the Discord embed and the Apprise/Markdown body."""
+
+    def test_no_env_returns_empty(self):
+        ctx = {"session_id": "sess-abc", "cwd": "/workspace/projects/demo"}
+        self.assertEqual(notify.session_url(ctx, environ={}), "")
+
+    def test_no_session_id_returns_empty(self):
+        ctx = {"session_id": "", "cwd": "/x"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL": "https://h/s/{session_id}"}
+        self.assertEqual(notify.session_url(ctx, environ=env), "")
+
+    def test_substitutes_session_id(self):
+        ctx = {"session_id": "sess-abc123", "cwd": "/workspace/projects/demo"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://cloudcli.local:3001/session/{session_id}"}
+        self.assertEqual(notify.session_url(ctx, environ=env),
+                          "https://cloudcli.local:3001/session/sess-abc123")
+
+    def test_substitutes_project_basename(self):
+        ctx = {"session_id": "s", "cwd": "/workspace/projects/HolyClaude"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/p/{project}/s/{session_id}"}
+        self.assertEqual(notify.session_url(ctx, environ=env),
+                          "https://h/p/HolyClaude/s/s")
+
+    def test_substitutes_project_slug(self):
+        ctx = {"session_id": "s", "cwd": "/workspace/projects/HolyClaude"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/projects/{project_slug}/sessions/{session_id}"}
+        self.assertEqual(
+            notify.session_url(ctx, environ=env),
+            "https://h/projects/-workspace-projects-HolyClaude/sessions/s")
+
+    def test_quotes_special_chars(self):
+        ctx = {"session_id": "sid", "cwd": "/has space/and?q=1"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/p/{cwd}/s/{session_id}"}
+        url = notify.session_url(ctx, environ=env)
+        # Slashes, spaces and question marks in the cwd must be encoded so
+        # they don't escape the URL path or open a query string.
+        self.assertNotIn(" ", url)
+        self.assertEqual(url.count("?"), 0)
+        self.assertIn("%20", url)
+        self.assertIn("%3F", url.upper())
+
+    def test_unknown_placeholder_swallows(self):
+        ctx = {"session_id": "s"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/{not_a_real_var}"}
+        self.assertEqual(notify.session_url(ctx, environ=env), "")
+
+    def test_embed_session_field_is_link_when_url_set(self):
+        ctx = stop_ctx()
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL": "https://h/s/{session_id}"}
+        # session_url reads os.environ directly; patch it for this test.
+        original = os.environ.copy()
+        os.environ.update(env)
+        try:
+            embed = notify.build_embed("stop", ctx, "standard")
+        finally:
+            os.environ.clear()
+            os.environ.update(original)
+        session = [f for f in embed["fields"] if "Session" in f["name"]][0]
+        self.assertIn("[`sess-abc123`](https://h/s/sess-abc123)",
+                       session["value"])
+
+    def test_embed_session_field_stays_code_when_url_unset(self):
+        embed = notify.build_embed("stop", stop_ctx(), "standard")
+        session = [f for f in embed["fields"] if "Session" in f["name"]][0]
+        self.assertIn("`sess-abc123`", session["value"])
+        self.assertNotIn("](http", session["value"])
+
+    def test_build_text_session_line_links_when_url_set(self):
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL": "https://h/s/{session_id}"}
+        original = os.environ.copy()
+        os.environ.update(env)
+        try:
+            text = notify.build_text("stop", stop_ctx(), "standard")
+        finally:
+            os.environ.clear()
+            os.environ.update(original)
+        self.assertIn("[`sess-abc123`](https://h/s/sess-abc123)", text)
+
+
 class TestConfigKnobs(unittest.TestCase):
 
     def test_verbosity_default_and_validation(self):

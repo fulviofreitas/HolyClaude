@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
@@ -651,10 +652,60 @@ def _author_name(ctx):
     return "HolyClaude"
 
 
+def session_url(ctx, environ=None):
+    """Render a clickable session URL from ``HOLYCLAUDE_NOTIFY_SESSION_URL``.
+
+    Template placeholders are URL-quoted before substitution so a space or
+    slash cannot break the link:
+
+    * ``{session_id}``
+    * ``{project}``         — basename of cwd
+    * ``{project_slug}``    — Claude Code's dashed cwd form (``-workspace-…``)
+    * ``{cwd}``
+    * ``{branch}``
+    * ``{transcript_path}``
+
+    Returns ``""`` when the env var is unset, when the template references an
+    unknown placeholder, or when no ``session_id`` is available.
+    """
+    if not ctx.get("session_id"):
+        return ""
+    template = ((environ if environ is not None else os.environ)
+                .get("HOLYCLAUDE_NOTIFY_SESSION_URL") or "").strip()
+    if not template:
+        return ""
+    cwd = ctx.get("cwd") or ""
+    project_slug = ""
+    if cwd:
+        project_slug = "-" + cwd.strip("/").replace("/", "-") if cwd.startswith("/") \
+            else cwd.replace("/", "-")
+    values = {
+        "session_id": ctx.get("session_id") or "",
+        "project": os.path.basename(cwd.rstrip("/")) or cwd,
+        "project_slug": project_slug,
+        "cwd": cwd,
+        "branch": ctx.get("branch") or "",
+        "transcript_path": ctx.get("transcript_path") or "",
+    }
+    safe = {key: urllib.parse.quote(val, safe="") for key, val in values.items()}
+    try:
+        return template.format(**safe)
+    except (KeyError, IndexError, ValueError):
+        return ""
+
+
+def _session_code(ctx):
+    """Render the session-id code, wrapping it in a markdown link when set."""
+    sid = ctx.get("session_id")
+    if not sid:
+        return ""
+    url = session_url(ctx)
+    return "[`{}`]({})".format(sid, url) if url else "`{}`".format(sid)
+
+
 def _add_session(add, ctx, budget):
     """Append the session-id field, plus the transcript path when verbose."""
-    sid = ctx.get("session_id")
-    value = "`{}`".format(sid) if sid else ""
+    value = _session_code(ctx)
     if budget["extras"]:
         if ctx.get("transcript_path"):
             value = (value + "\n`{}`".format(ctx["transcript_path"])).strip()
@@ -796,7 +847,7 @@ def build_text(event, ctx, verbosity="standard"):
             lines.append(_files_value(ctx["files"], budget["files"], cwd))
 
     if ctx.get("session_id"):
-        lines.append("**Session:** `{}`".format(ctx["session_id"]))
+        lines.append("**Session:** " + _session_code(ctx))
     return truncate("\n".join(line for line in lines if line), LIMIT_CONTENT - 64)
 
 
