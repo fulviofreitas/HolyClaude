@@ -252,6 +252,8 @@ class TestStopEmbed(unittest.TestCase):
         embed = notify.build_embed("stop", stop_ctx(), "minimal")
         names = " ".join(f["name"] for f in embed["fields"])
         self.assertNotIn("Prompt", names)
+        self.assertNotIn("You asked", names)
+        self.assertNotIn("Claude replied", names)
         self.assertNotIn("Files changed", names)
         assert_within_discord_limits(self, embed)
 
@@ -463,6 +465,243 @@ class TestBuildText(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+
+class TestPromptAnswerPairing(unittest.TestCase):
+    """The Prompt field on the notification must reflect the LAST user turn —
+    not the first one from the session — so it pairs with the answer that is
+    rendered in the description."""
+
+    def _write_transcript(self, lines):
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for entry in lines:
+                handle.write(json.dumps(entry) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def _user(self, text):
+        return {"type": "user", "message": {"role": "user", "content": text}}
+
+    def _assistant(self, text):
+        return {"type": "assistant",
+                "message": {"role": "assistant", "model": "claude-opus-4-7",
+                            "content": [{"type": "text", "text": text}]}}
+
+    def _tool_result(self):
+        # tool_result on a "user" entry must NOT be treated as a prompt.
+        return {"type": "user",
+                "message": {"role": "user",
+                            "content": [{"type": "tool_result",
+                                          "tool_use_id": "x", "content": "ok"}]}}
+
+    def test_multi_turn_picks_last_prompt(self):
+        path = self._write_transcript([
+            self._user("Add dark-mode toggle to settings."),
+            self._assistant("Done — added the toggle."),
+            self._user("Also persist the choice to localStorage."),
+            self._assistant("Persisted, with a test."),
+        ])
+        info = notify.parse_transcript(path)
+        self.assertEqual(info["prompt"], "Add dark-mode toggle to settings.")
+        self.assertEqual(info["last_prompt"],
+                          "Also persist the choice to localStorage.")
+        self.assertEqual(info["summary"], "Persisted, with a test.")
+
+    def test_single_turn_first_equals_last(self):
+        path = self._write_transcript([
+            self._user("Run the test suite."),
+            self._assistant("All green."),
+        ])
+        info = notify.parse_transcript(path)
+        self.assertEqual(info["prompt"], "Run the test suite.")
+        self.assertEqual(info["last_prompt"], info["prompt"])
+
+    def test_tool_results_do_not_pollute_last_prompt(self):
+        path = self._write_transcript([
+            self._user("First real prompt."),
+            self._assistant("Working..."),
+            self._tool_result(),         # synthetic tool_result user entry
+            self._tool_result(),
+            self._assistant("Done."),
+        ])
+        info = notify.parse_transcript(path)
+        self.assertEqual(info["prompt"], "First real prompt.")
+        self.assertEqual(info["last_prompt"], "First real prompt.")
+
+    def test_build_context_falls_back_to_first_prompt(self):
+        # No transcript → last_prompt should mirror prompt (which may also be
+        # empty) so embed rendering picks something sensible.
+        ctx = notify.build_context("stop", {"session_id": "s"})
+        self.assertEqual(ctx["last_prompt"], ctx["prompt"])
+
+    def test_stop_embed_shows_last_prompt_label(self):
+        ctx = stop_ctx(prompt="ORIGINAL",
+                       last_prompt="LATEST QUESTION FROM USER")
+        embed = notify.build_embed("stop", ctx, "standard")
+        asked = [f for f in embed["fields"] if "You asked" in f["name"]]
+        self.assertTrue(asked, "stop embed must include the You asked field")
+        self.assertIn("LATEST QUESTION FROM USER", asked[0]["value"])
+        # On standard verbosity the session-origin prompt is NOT shown.
+        self.assertFalse(
+            any("Session started with" in f["name"] for f in embed["fields"]))
+
+    def test_stop_embed_verbose_shows_session_origin_when_different(self):
+        ctx = stop_ctx(prompt="ORIGINAL ASK",
+                       last_prompt="FOLLOW-UP ASK")
+        embed = notify.build_embed("stop", ctx, "verbose")
+        origin = [f for f in embed["fields"]
+                  if "Session started with" in f["name"]]
+        self.assertTrue(origin, "verbose embed should expose the origin prompt")
+        self.assertIn("ORIGINAL ASK", origin[0]["value"])
+
+    def test_stop_embed_verbose_omits_session_origin_when_identical(self):
+        ctx = stop_ctx(prompt="SAME", last_prompt="SAME")
+        embed = notify.build_embed("stop", ctx, "verbose")
+        self.assertFalse(
+            any("Session started with" in f["name"] for f in embed["fields"]))
+
+    def test_error_embed_uses_last_prompt(self):
+        ctx = error_ctx(prompt="ORIGINAL", last_prompt="LATEST FAIL TRIGGER")
+        embed = notify.build_embed("error", ctx, "standard")
+        asked = [f for f in embed["fields"] if "You asked" in f["name"]]
+        self.assertTrue(asked)
+        self.assertIn("LATEST FAIL TRIGGER", asked[0]["value"])
+
+    def test_build_text_uses_last_prompt(self):
+        ctx = stop_ctx(prompt="ORIGINAL", last_prompt="LATEST")
+        text = notify.build_text("stop", ctx, "standard")
+        self.assertIn("LATEST", text)
+        self.assertIn("You asked:", text)
+
+    def test_build_text_verbose_includes_session_origin(self):
+        ctx = stop_ctx(prompt="ORIGINAL", last_prompt="LATEST")
+        text = notify.build_text("stop", ctx, "verbose")
+        self.assertIn("Session started with:", text)
+
+    def test_stop_embed_shows_claude_replied_field(self):
+        ctx = stop_ctx(summary="Persisted and wrote a test.")
+        embed = notify.build_embed("stop", ctx, "standard")
+        replied = [f for f in embed["fields"] if "Claude replied" in f["name"]]
+        self.assertTrue(replied,
+                        "stop embed must expose the answer as a labeled field")
+        self.assertIn("Persisted and wrote a test.", replied[0]["value"])
+        # Description still carries the full reply too (D1 keeps both).
+        self.assertIn("Persisted and wrote a test.", embed["description"])
+
+    def test_stop_embed_replied_field_paired_after_you_asked(self):
+        ctx = stop_ctx(prompt="P", last_prompt="P", summary="The reply.")
+        embed = notify.build_embed("stop", ctx, "standard")
+        names = [f["name"] for f in embed["fields"]]
+        asked_idx = next(i for i, n in enumerate(names) if "You asked" in n)
+        reply_idx = next(i for i, n in enumerate(names) if "Claude replied" in n)
+        self.assertEqual(reply_idx, asked_idx + 1,
+                          "Claude replied must follow You asked for visual pairing")
+
+    def test_minimal_embed_omits_claude_replied_field(self):
+        ctx = stop_ctx(summary="something")
+        embed = notify.build_embed("stop", ctx, "minimal")
+        self.assertFalse(
+            any("Claude replied" in f["name"] for f in embed["fields"]))
+
+    def test_build_text_labels_summary_when_pair_shown(self):
+        ctx = stop_ctx(prompt="P", last_prompt="P", summary="Done and tested.")
+        text = notify.build_text("stop", ctx, "standard")
+        self.assertIn("Claude replied:", text)
+        self.assertIn("You asked:", text)
+
+    def test_build_text_minimal_keeps_summary_unlabeled(self):
+        ctx = stop_ctx(summary="Done and tested.")
+        text = notify.build_text("stop", ctx, "minimal")
+        self.assertNotIn("Claude replied:", text)
+        self.assertIn("Done and tested.", text)
+
+
+class TestSessionUrl(unittest.TestCase):
+    """HOLYCLAUDE_NOTIFY_SESSION_URL turns the session-id into a clickable
+    markdown link in both the Discord embed and the Apprise/Markdown body."""
+
+    def test_no_env_returns_empty(self):
+        ctx = {"session_id": "sess-abc", "cwd": "/workspace/projects/demo"}
+        self.assertEqual(notify.session_url(ctx, environ={}), "")
+
+    def test_no_session_id_returns_empty(self):
+        ctx = {"session_id": "", "cwd": "/x"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL": "https://h/s/{session_id}"}
+        self.assertEqual(notify.session_url(ctx, environ=env), "")
+
+    def test_substitutes_session_id(self):
+        ctx = {"session_id": "sess-abc123", "cwd": "/workspace/projects/demo"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://cloudcli.local:3001/session/{session_id}"}
+        self.assertEqual(notify.session_url(ctx, environ=env),
+                          "https://cloudcli.local:3001/session/sess-abc123")
+
+    def test_substitutes_project_basename(self):
+        ctx = {"session_id": "s", "cwd": "/workspace/projects/HolyClaude"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/p/{project}/s/{session_id}"}
+        self.assertEqual(notify.session_url(ctx, environ=env),
+                          "https://h/p/HolyClaude/s/s")
+
+    def test_substitutes_project_slug(self):
+        ctx = {"session_id": "s", "cwd": "/workspace/projects/HolyClaude"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/projects/{project_slug}/sessions/{session_id}"}
+        self.assertEqual(
+            notify.session_url(ctx, environ=env),
+            "https://h/projects/-workspace-projects-HolyClaude/sessions/s")
+
+    def test_quotes_special_chars(self):
+        ctx = {"session_id": "sid", "cwd": "/has space/and?q=1"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/p/{cwd}/s/{session_id}"}
+        url = notify.session_url(ctx, environ=env)
+        # Slashes, spaces and question marks in the cwd must be encoded so
+        # they don't escape the URL path or open a query string.
+        self.assertNotIn(" ", url)
+        self.assertEqual(url.count("?"), 0)
+        self.assertIn("%20", url)
+        self.assertIn("%3F", url.upper())
+
+    def test_unknown_placeholder_swallows(self):
+        ctx = {"session_id": "s"}
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL":
+               "https://h/{not_a_real_var}"}
+        self.assertEqual(notify.session_url(ctx, environ=env), "")
+
+    def test_embed_session_field_is_link_when_url_set(self):
+        ctx = stop_ctx()
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL": "https://h/s/{session_id}"}
+        # session_url reads os.environ directly; patch it for this test.
+        original = os.environ.copy()
+        os.environ.update(env)
+        try:
+            embed = notify.build_embed("stop", ctx, "standard")
+        finally:
+            os.environ.clear()
+            os.environ.update(original)
+        session = [f for f in embed["fields"] if "Session" in f["name"]][0]
+        self.assertIn("[`sess-abc123`](https://h/s/sess-abc123)",
+                       session["value"])
+
+    def test_embed_session_field_stays_code_when_url_unset(self):
+        embed = notify.build_embed("stop", stop_ctx(), "standard")
+        session = [f for f in embed["fields"] if "Session" in f["name"]][0]
+        self.assertIn("`sess-abc123`", session["value"])
+        self.assertNotIn("](http", session["value"])
+
+    def test_build_text_session_line_links_when_url_set(self):
+        env = {"HOLYCLAUDE_NOTIFY_SESSION_URL": "https://h/s/{session_id}"}
+        original = os.environ.copy()
+        os.environ.update(env)
+        try:
+            text = notify.build_text("stop", stop_ctx(), "standard")
+        finally:
+            os.environ.clear()
+            os.environ.update(original)
+        self.assertIn("[`sess-abc123`](https://h/s/sess-abc123)", text)
+
 
 class TestConfigKnobs(unittest.TestCase):
 
