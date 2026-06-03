@@ -950,7 +950,7 @@ See [configuration docs](docs/configuration.md#notifications-apprise) for all su
 
 Notifications are **context-aware**, not generic. For Discord webhooks they are sent as native rich [embeds](https://discord.com/developers/docs/resources/message#embed-object); every other service receives the same information as an enriched Markdown message.
 
-- **Task complete** — green embed with the task title, **your last prompt** (the one Claude just answered), a summary of what was done, files changed, tools used, duration, token usage, model, working directory, git branch, and session ID. On `verbose`, the session's *original* prompt is shown as well when it differs.
+- **Task complete** — green embed with the task title, **your last prompt** and **Claude's reply** as paired fields (the description still carries the full reply for prominence), files changed, tools used, duration, token usage, model, working directory, git branch, and session ID. On `verbose`, the session's *original* prompt is shown as well when it differs.
 - **Tool failure** — red embed with the failing tool, the (truncated) tool input, the full error, **the last prompt that led to it**, working directory, git branch, and a suggested next step.
 - **Waiting** — yellow embed with the permission/idle message, working directory, git branch, and session ID.
 
@@ -976,6 +976,7 @@ Each embed is colour-coded (🟢 success · 🔴 error · 🟡 waiting), carries
       { "name": "🧮 Tokens", "value": "≈4,210 out · ≈81,233 context", "inline": true },
       { "name": "🤖 Model", "value": "`claude-opus-4-7`", "inline": true },
       { "name": "🗣️ You asked", "value": "Also persist the choice to localStorage." },
+      { "name": "🤖 Claude replied", "value": "Added the toggle to the settings page, persisted the choice, and wrote two tests." },
       { "name": "📄 Files changed (2)", "value": "• `ui/settings.tsx`\n• `ui/theme.ts`" },
       { "name": "🧵 Session", "value": "`sess-abc123`" }
     ],

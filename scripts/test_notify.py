@@ -253,6 +253,7 @@ class TestStopEmbed(unittest.TestCase):
         names = " ".join(f["name"] for f in embed["fields"])
         self.assertNotIn("Prompt", names)
         self.assertNotIn("You asked", names)
+        self.assertNotIn("Claude replied", names)
         self.assertNotIn("Files changed", names)
         assert_within_discord_limits(self, embed)
 
@@ -577,6 +578,43 @@ class TestPromptAnswerPairing(unittest.TestCase):
         ctx = stop_ctx(prompt="ORIGINAL", last_prompt="LATEST")
         text = notify.build_text("stop", ctx, "verbose")
         self.assertIn("Session started with:", text)
+
+    def test_stop_embed_shows_claude_replied_field(self):
+        ctx = stop_ctx(summary="Persisted and wrote a test.")
+        embed = notify.build_embed("stop", ctx, "standard")
+        replied = [f for f in embed["fields"] if "Claude replied" in f["name"]]
+        self.assertTrue(replied,
+                        "stop embed must expose the answer as a labeled field")
+        self.assertIn("Persisted and wrote a test.", replied[0]["value"])
+        # Description still carries the full reply too (D1 keeps both).
+        self.assertIn("Persisted and wrote a test.", embed["description"])
+
+    def test_stop_embed_replied_field_paired_after_you_asked(self):
+        ctx = stop_ctx(prompt="P", last_prompt="P", summary="The reply.")
+        embed = notify.build_embed("stop", ctx, "standard")
+        names = [f["name"] for f in embed["fields"]]
+        asked_idx = next(i for i, n in enumerate(names) if "You asked" in n)
+        reply_idx = next(i for i, n in enumerate(names) if "Claude replied" in n)
+        self.assertEqual(reply_idx, asked_idx + 1,
+                          "Claude replied must follow You asked for visual pairing")
+
+    def test_minimal_embed_omits_claude_replied_field(self):
+        ctx = stop_ctx(summary="something")
+        embed = notify.build_embed("stop", ctx, "minimal")
+        self.assertFalse(
+            any("Claude replied" in f["name"] for f in embed["fields"]))
+
+    def test_build_text_labels_summary_when_pair_shown(self):
+        ctx = stop_ctx(prompt="P", last_prompt="P", summary="Done and tested.")
+        text = notify.build_text("stop", ctx, "standard")
+        self.assertIn("Claude replied:", text)
+        self.assertIn("You asked:", text)
+
+    def test_build_text_minimal_keeps_summary_unlabeled(self):
+        ctx = stop_ctx(summary="Done and tested.")
+        text = notify.build_text("stop", ctx, "minimal")
+        self.assertNotIn("Claude replied:", text)
+        self.assertIn("Done and tested.", text)
 
 
 class TestConfigKnobs(unittest.TestCase):

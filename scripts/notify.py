@@ -608,6 +608,9 @@ def build_embed(event, ctx, verbosity="standard"):
             if last_prompt:
                 add("🗣️ You asked",
                     redact(truncate(last_prompt, budget["prompt"])))
+            if ctx.get("summary"):
+                add("🤖 Claude replied",
+                    redact(truncate(ctx["summary"], LIMIT_FIELD_VALUE)))
             first_prompt = ctx.get("prompt")
             if (budget["extras"] and first_prompt
                     and first_prompt != last_prompt):
@@ -768,7 +771,9 @@ def build_text(event, ctx, verbosity="standard"):
         heading = ctx.get("title") or "Task complete"
         lines.append("**✅ {}**".format(heading))
         if ctx.get("summary"):
-            lines.append(redact(truncate(ctx["summary"], budget["summary"])))
+            label = "**Claude replied:** " if budget["prompt"] else ""
+            lines.append(
+                label + redact(truncate(ctx["summary"], budget["summary"])))
         meta = _meta_line([("Dir", os.path.basename(cwd.rstrip("/")) or cwd),
                            ("Branch", ctx.get("branch")),
                            ("Duration", human_duration(ctx.get("duration")))])
