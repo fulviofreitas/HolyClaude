@@ -57,6 +57,10 @@ services:
       # --- Notification format (optional) ---
       # - HOLYCLAUDE_NOTIFY_STYLE=embed                  # embed (default) | simple
       # - HOLYCLAUDE_NOTIFY_VERBOSITY=standard           # minimal | standard | verbose
+      # --- Per-session Discord threads (optional, Discord webhooks only) ---
+      # - HOLYCLAUDE_NOTIFY_DISCORD_THREADS=off          # off (default) | on — route each session_id into its own thread
+      # - HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME=         # optional template, default "{project} · {session_short}"
+      #                                                  # Placeholders: {session_id} {session_short} {project} {project_slug} {cwd} {branch}
 
       # --- Anthropic / Claude Code (optional, can also authenticate via web UI) ---
       # - ANTHROPIC_API_KEY=

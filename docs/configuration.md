@@ -85,8 +85,12 @@ Two optional variables tune the output:
 |----------|---------|-------------|
 | `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | `embed` — rich Discord embeds. `simple` — plain one-line message everywhere (the embed fallback path). |
 | `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | `minimal` — title + summary only. `standard` — full context. `verbose` — also adds the transcript path and full tool list. |
+| `HOLYCLAUDE_NOTIFY_DISCORD_THREADS` | `off` | Set to `on` to open one Discord thread per Claude Code `session_id`, so parallel projects don't interleave in the same channel. Discord webhooks only; other Apprise services stay flat. |
+| `HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME` | `{project} · {session_short}` | Thread name template used on first send. Placeholders: `{session_id}`, `{session_short}`, `{project}`, `{project_slug}`, `{cwd}`, `{branch}`. Truncated to Discord's 100-char limit. |
 
 If a rich embed is ever rejected by Discord (rate limiting, a malformed field), the script automatically retries as a plain-text message, so notifications are never lost. See [README → Notifications](../README.md#bell-notifications) for rendered embed examples per event type.
+
+When `HOLYCLAUDE_NOTIFY_DISCORD_THREADS=on`, the mapping `{webhook_id: {session_id: thread_id}}` is persisted at `~/.claude/notify-threads.json`. Writes use an atomic `os.replace` and an `fcntl.flock` advisory lock on `~/.claude/notify-threads.lock`, so concurrent hook fires from parallel sessions don't corrupt the file. If a cached thread is gone, the sender transparently opens a fresh one; on total failure it falls back to a flat post so notifications are never silently dropped.
 
 **Migrating from Pushover (v1.0.0):** Replace `PUSHOVER_APP_TOKEN` and `PUSHOVER_USER_KEY` with a single variable: `NOTIFY_PUSHOVER=pover://user_key@app_token`
 

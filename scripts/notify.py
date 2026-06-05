@@ -46,6 +46,14 @@ from datetime import datetime, timezone
 
 FLAG_FILE = "/home/claude/.claude/notify-on"
 
+# Per-session Discord thread persistence (opt-in via
+# HOLYCLAUDE_NOTIFY_DISCORD_THREADS=on). Shape on disk:
+#   {webhook_id_str: {session_id_str: thread_id_str}}
+THREADS_FILE = "/home/claude/.claude/notify-threads.json"
+THREADS_LOCKFILE = "/home/claude/.claude/notify-threads.lock"
+LIMIT_THREAD_NAME = 100  # Discord webhook thread_name max length.
+DEFAULT_THREAD_NAME_TEMPLATE = "{project} · {session_short}"
+
 # NOTIFY_* keys that carry configuration rather than a destination URL.
 RESERVED_NOTIFY_KEYS = {"NOTIFY_URLS"}
 
@@ -925,21 +933,43 @@ def collect_targets(environ):
     return discord, apprise_urls
 
 
-def post_discord(webhook_url, payload):
-    """POST a JSON payload to a Discord webhook. Returns True on a 2xx reply."""
+def _post_discord_raw(webhook_url, payload, params=None):
+    """POST a JSON payload to a Discord webhook with optional query params.
+
+    Returns ``(ok, body)`` — ``ok`` is True on a 2xx response, ``body`` is the
+    parsed JSON response (or ``None`` when the response was empty, unparseable,
+    or the request raised). Never propagates exceptions.
+    """
+    url = webhook_url
+    if params:
+        url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        webhook_url, data=data, method="POST",
+        url, data=data, method="POST",
         headers={"Content-Type": "application/json",
                  "User-Agent": "HolyClaude-notify/2"},
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
-            return 200 <= response.status < 300
+            ok = 200 <= response.status < 300
+            body = None
+            try:
+                raw = response.read()
+                if raw:
+                    body = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception:
+                body = None
+            return ok, body
     except urllib.error.HTTPError as exc:
-        return 200 <= exc.code < 300
+        return 200 <= exc.code < 300, None
     except Exception:
-        return False
+        return False, None
+
+
+def post_discord(webhook_url, payload):
+    """POST a JSON payload to a Discord webhook. Returns True on a 2xx reply."""
+    ok, _ = _post_discord_raw(webhook_url, payload)
+    return ok
 
 
 def send_to_discord(webhook_url, embed, fallback_text):
@@ -954,6 +984,261 @@ def send_to_discord(webhook_url, embed, fallback_text):
     return post_discord(webhook_url,
                         {"username": "HolyClaude",
                          "content": truncate(fallback_text, LIMIT_CONTENT)})
+
+
+# --------------------------------------------------------------------------- #
+# Per-session Discord threads (opt-in)                                        #
+# --------------------------------------------------------------------------- #
+
+def discord_threads_enabled(environ=None):
+    """True when HOLYCLAUDE_NOTIFY_DISCORD_THREADS asks for threaded routing."""
+    env = environ if environ is not None else os.environ
+    value = (env.get("HOLYCLAUDE_NOTIFY_DISCORD_THREADS") or "").strip().lower()
+    return value in ("on", "1", "true", "yes", "enabled")
+
+
+def discord_webhook_id(webhook_url):
+    """Extract the numeric webhook id segment from a normalised webhook URL."""
+    if not webhook_url:
+        return ""
+    parts = webhook_url.split("/webhooks/", 1)
+    if len(parts) < 2:
+        return ""
+    segments = [seg for seg in parts[1].split("?", 1)[0].split("/") if seg]
+    if not segments:
+        return ""
+    candidate = segments[0]
+    return candidate if candidate.isdigit() else ""
+
+
+def render_thread_name(ctx, environ=None):
+    """Render the per-session thread name from ``HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME``.
+
+    Falls back to ``DEFAULT_THREAD_NAME_TEMPLATE`` when the env var is unset or
+    references an unknown placeholder. The result is redacted and clamped to
+    Discord's 100-character ``thread_name`` limit.
+
+    Supported placeholders:
+        ``{session_id}`` ``{session_short}`` ``{project}`` ``{project_slug}``
+        ``{cwd}`` ``{branch}``
+    """
+    env = environ if environ is not None else os.environ
+    template = (env.get("HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME") or "").strip()
+    cwd = ctx.get("cwd") or ""
+    project = os.path.basename(cwd.rstrip("/")) or cwd or "workspace"
+    sid = ctx.get("session_id") or ""
+    project_slug = ""
+    if cwd:
+        project_slug = ("-" + cwd.strip("/").replace("/", "-")
+                        if cwd.startswith("/") else cwd.replace("/", "-"))
+    values = {
+        "session_id": sid,
+        "session_short": sid[:8] if sid else "",
+        "project": project,
+        "project_slug": project_slug,
+        "cwd": cwd,
+        "branch": ctx.get("branch") or "",
+    }
+    try:
+        rendered = (template or DEFAULT_THREAD_NAME_TEMPLATE).format(**values)
+    except (KeyError, IndexError, ValueError):
+        try:
+            rendered = DEFAULT_THREAD_NAME_TEMPLATE.format(**values)
+        except (KeyError, IndexError, ValueError):
+            rendered = project
+    rendered = redact(rendered).strip() or "HolyClaude"
+    return truncate(rendered, LIMIT_THREAD_NAME)
+
+
+def _load_thread_map(path):
+    """Read the {webhook_id: {session_id: thread_id}} map. Returns {} on errors."""
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    clean = {}
+    for outer_key, inner in data.items():
+        if not isinstance(inner, dict):
+            continue
+        bucket = {str(sk): str(sv) for sk, sv in inner.items()
+                  if sk and sv and isinstance(sv, (str, int))}
+        if bucket:
+            clean[str(outer_key)] = bucket
+    return clean
+
+
+def _save_thread_map(path, mapping):
+    """Atomically write the thread map to ``path``. Silent on any I/O failure."""
+    if not path:
+        return
+    try:
+        directory = os.path.dirname(path) or "."
+        os.makedirs(directory, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(mapping, handle, indent=2, sort_keys=True)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass  # Best-effort durability; some filesystems don't support fsync.
+        os.replace(tmp, path)
+    except Exception:
+        return
+
+
+def _with_thread_lock(lock_path, exclusive, fn):
+    """Run ``fn()`` under an advisory ``fcntl`` lock on ``lock_path``.
+
+    Locking is best-effort: if ``fcntl`` is unavailable or the lockfile can't
+    be opened (read-only mount, missing parent), ``fn`` still runs so a
+    notification is never dropped because of a lock failure.
+    """
+    try:
+        import fcntl  # POSIX-only; absent on Windows.
+    except ImportError:
+        return fn()
+    if lock_path:
+        try:
+            os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+        except OSError:
+            pass  # The open() below will fall through to the unlocked path.
+    try:
+        handle = open(lock_path, "a+")
+    except OSError:
+        return fn()
+    try:
+        try:
+            fcntl.flock(handle.fileno(),
+                        fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        except OSError:
+            pass  # Lock unavailable — run unguarded rather than drop the call.
+        return fn()
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass  # Close below releases the lock anyway.
+        try:
+            handle.close()
+        except OSError:
+            pass  # Teardown error — nothing actionable left.
+
+
+def get_thread_id(webhook_id, session_id, threads_path=None, lock_path=None):
+    """Read the cached thread id for ``(webhook_id, session_id)``, or ''."""
+    if not webhook_id or not session_id:
+        return ""
+    path = threads_path if threads_path is not None else THREADS_FILE
+    lock = lock_path if lock_path is not None else THREADS_LOCKFILE
+
+    def _read():
+        mapping = _load_thread_map(path)
+        return (mapping.get(str(webhook_id)) or {}).get(str(session_id), "")
+
+    return _with_thread_lock(lock, exclusive=False, fn=_read)
+
+
+def set_thread_id(webhook_id, session_id, thread_id,
+                  threads_path=None, lock_path=None):
+    """Persist ``thread_id`` for ``(webhook_id, session_id)``. Silent on errors."""
+    if not webhook_id or not session_id or not thread_id:
+        return
+    path = threads_path if threads_path is not None else THREADS_FILE
+    lock = lock_path if lock_path is not None else THREADS_LOCKFILE
+
+    def _write():
+        mapping = _load_thread_map(path)
+        bucket = mapping.setdefault(str(webhook_id), {})
+        bucket[str(session_id)] = str(thread_id)
+        _save_thread_map(path, mapping)
+
+    _with_thread_lock(lock, exclusive=True, fn=_write)
+
+
+def _send_into_thread(webhook_url, embed, fallback_text, thread_id):
+    """POST a follow-up message into an existing thread. Returns True on 2xx."""
+    params = {"thread_id": str(thread_id)}
+    if embed:
+        ok, _ = _post_discord_raw(
+            webhook_url, {"username": "HolyClaude", "embeds": [embed]},
+            params=params)
+        if ok:
+            return True
+    ok, _ = _post_discord_raw(
+        webhook_url,
+        {"username": "HolyClaude",
+         "content": truncate(fallback_text, LIMIT_CONTENT)},
+        params=params)
+    return ok
+
+
+def _create_thread(webhook_url, embed, fallback_text, thread_name):
+    """POST the first message and ask Discord to wrap it in a new thread.
+
+    Returns the new thread id (Discord's ``channel_id`` for the created thread)
+    or ``""`` when the post failed entirely. With ``wait=true`` Discord
+    synchronously returns the created message object; its ``channel_id`` field
+    is the thread we should target on subsequent posts.
+    """
+    params = {"wait": "true"}
+    if embed:
+        payload = {"username": "HolyClaude", "embeds": [embed],
+                   "thread_name": thread_name}
+        ok, body = _post_discord_raw(webhook_url, payload, params=params)
+        if ok and isinstance(body, dict):
+            return str(body.get("channel_id") or "")
+    payload = {"username": "HolyClaude",
+               "content": truncate(fallback_text, LIMIT_CONTENT),
+               "thread_name": thread_name}
+    ok, body = _post_discord_raw(webhook_url, payload, params=params)
+    if ok and isinstance(body, dict):
+        return str(body.get("channel_id") or "")
+    return ""
+
+
+def send_to_discord_threaded(webhook_url, embed, fallback_text, ctx,
+                              environ=None,
+                              threads_path=None, lock_path=None):
+    """Send an embed routed into a per-session Discord thread.
+
+    First notification for a ``(webhook, session_id)`` pair: posts with
+    ``thread_name`` so Discord opens a new thread, then caches its id.
+    Subsequent notifications: posts with ``?thread_id=…``. On any unrecoverable
+    error (no session id, locking missing, the thread was deleted upstream),
+    falls back to the flat :func:`send_to_discord` path so a notification is
+    never silently dropped.
+    """
+    env = environ if environ is not None else os.environ
+    if not discord_threads_enabled(env):
+        return send_to_discord(webhook_url, embed, fallback_text)
+    webhook_id = discord_webhook_id(webhook_url)
+    session_id = ctx.get("session_id") or ""
+    if not webhook_id or not session_id:
+        return send_to_discord(webhook_url, embed, fallback_text)
+
+    cached = get_thread_id(webhook_id, session_id,
+                           threads_path=threads_path, lock_path=lock_path)
+    if cached and _send_into_thread(webhook_url, embed, fallback_text, cached):
+        return True
+    # Either no cached id yet, or the cached thread is gone (archived past
+    # retention, deleted by a moderator) — open a fresh one.
+
+    thread_name = render_thread_name(ctx, env)
+    new_id = _create_thread(webhook_url, embed, fallback_text, thread_name)
+    if new_id:
+        set_thread_id(webhook_id, session_id, new_id,
+                      threads_path=threads_path, lock_path=lock_path)
+        return True
+
+    # Thread creation failed too — fall back to a flat post so the user still
+    # gets a notification even when the channel rejects thread_name.
+    return send_to_discord(webhook_url, embed, fallback_text)
 
 
 def send_via_apprise(urls, title, body, notify_type):
@@ -1016,8 +1301,12 @@ def main():
 
         # Discord webhooks: native rich embed (unless simple style is forced).
         embed = build_embed(event, ctx, verbosity) if style == "embed" else None
+        threads_on = discord_threads_enabled(os.environ)
         for webhook_url in discord_urls:
-            send_to_discord(webhook_url, embed, body)
+            if threads_on:
+                send_to_discord_threaded(webhook_url, embed, body, ctx)
+            else:
+                send_to_discord(webhook_url, embed, body)
 
         # Every other service: enriched Markdown via Apprise.
         send_via_apprise(apprise_urls, title, body, notify_type)

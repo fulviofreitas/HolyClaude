@@ -454,6 +454,11 @@ services:
       #                                                  # Placeholders: {session_id} {project} {project_slug} {cwd} {branch} {transcript_path}
       #                                                  # e.g. https://my-host:3001/session/{session_id}
       #
+      # - HOLYCLAUDE_NOTIFY_DISCORD_THREADS=off          # off (default) | on — route every Discord notification for the same
+      #                                                  # session_id into its own thread, so projects don't interleave.
+      # - HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME=         # optional template, default "{project} · {session_short}"
+      #                                                  # Placeholders: {session_id} {session_short} {project} {project_slug} {cwd} {branch}
+      #
       # AI PROVIDER KEYS (optional)
       # Claude Code can authenticate via web UI (OAuth) or ANTHROPIC_API_KEY.
       # Set these if you want to use additional AI CLIs or API-based auth.
@@ -522,6 +527,8 @@ The complete reference. Every variable, what it defaults to, what it does.
 | `HOLYCLAUDE_NOTIFY_STYLE` | `embed` | Notification format — `embed` (rich) or `simple` (plain text) |
 | `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | Notification detail — `minimal`, `standard`, or `verbose` |
 | `HOLYCLAUDE_NOTIFY_SESSION_URL` | *(unset)* | Optional URL template — turns `🧵 Session` into a clickable link. Placeholders: `{session_id}`, `{project}`, `{project_slug}`, `{cwd}`, `{branch}`, `{transcript_path}` |
+| `HOLYCLAUDE_NOTIFY_DISCORD_THREADS` | `off` | `off` or `on` — when `on`, each Discord notification for the same `session_id` is routed into its own thread (Discord webhooks only; other Apprise services stay flat) |
+| `HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME` | `{project} · {session_short}` | Template used for the Discord thread name on first send. Placeholders: `{session_id}`, `{session_short}`, `{project}`, `{project_slug}`, `{cwd}`, `{branch}` |
 | `ANTHROPIC_API_KEY` | *(unset)* | Anthropic API key (alternative to web UI OAuth) |
 | `ANTHROPIC_AUTH_TOKEN` | *(unset)* | Anthropic auth token (alternative to API key, or set to `ollama` for Ollama) |
 | `ANTHROPIC_BASE_URL` | *(unset)* | Custom Anthropic API endpoint (proxies, private deployments, or Ollama's Anthropic-compatible API) |
@@ -1047,6 +1054,24 @@ Two optional environment variables control how much detail each notification car
 | `HOLYCLAUDE_NOTIFY_VERBOSITY` | `standard` | `minimal`, `standard`, `verbose` | `minimal` = title + summary only; `verbose` adds the transcript path, longer prompt/summary, the full tool list, and the session's original prompt when it differs from the last one |
 
 **Privacy:** secrets, API keys, tokens, and credentials are redacted from every field — prompt, summary, tool input, error text — before a notification leaves the container.
+
+### Per-session Discord threads
+
+When you run several projects in parallel (`/workspace/projects/foo` and `/workspace/projects/bar` at the same time), every embed lands in the same Discord channel and the conversations interleave. Opt in with `HOLYCLAUDE_NOTIFY_DISCORD_THREADS=on` and HolyClaude opens a dedicated thread for each Claude Code `session_id`, so all the chatter from one project stays together.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `HOLYCLAUDE_NOTIFY_DISCORD_THREADS` | `off` | Set to `on` to route Discord notifications into per-session threads. Off → behaves exactly as before. |
+| `HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME` | `{project} · {session_short}` | Thread name template used on first send. Placeholders: `{session_id}`, `{session_short}` (first 8 chars), `{project}`, `{project_slug}`, `{cwd}`, `{branch}`. Truncated to Discord's 100-char limit. |
+
+How it works under the hood:
+
+- The first notification for a `(webhook, session_id)` pair POSTs with `?wait=true` and `thread_name` in the body; Discord opens a thread and returns its id.
+- Subsequent notifications POST with `?thread_id=<cached id>` — no thread name, just the embed.
+- Cache lives at `~/.claude/notify-threads.json`, shape `{webhook_id: {session_id: thread_id}}`. Writes go via a sibling `.tmp` + `os.replace` and an `fcntl.flock` advisory lock on `~/.claude/notify-threads.lock`, so concurrent hook fires from parallel sessions don't corrupt it.
+- If a cached thread is gone (archived past retention, deleted by a moderator), the sender opens a fresh one transparently and updates the cache. If thread creation itself fails, it falls back to a flat post so a notification is never silently dropped.
+
+This is Discord-only and additive: Telegram, Slack, Email, Gotify, and every other Apprise destination keep their flat delivery — channels there don't have a native "thread" concept that maps cleanly.
 
 > Completely silent when not configured. No `NOTIFY_*` vars set? No flag file? Zero network calls. Zero log spam. Zero overhead.
 

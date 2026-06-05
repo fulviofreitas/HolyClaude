@@ -10,8 +10,11 @@ Run via discovery:  python3 -m unittest discover -s scripts -p 'test_*.py'
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import notify  # noqa: E402
@@ -722,6 +725,323 @@ class TestConfigKnobs(unittest.TestCase):
     def test_legacy_events_present(self):
         for event in ("stop", "error", "waiting"):
             self.assertIn(event, notify.LEGACY_EVENTS)
+
+
+class TestDiscordThreadsGate(unittest.TestCase):
+    """HOLYCLAUDE_NOTIFY_DISCORD_THREADS opts into per-session thread routing."""
+
+    def test_default_off(self):
+        self.assertFalse(notify.discord_threads_enabled({}))
+
+    def test_explicit_off(self):
+        for value in ("off", "0", "false", "no", ""):
+            self.assertFalse(notify.discord_threads_enabled(
+                {"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": value}))
+
+    def test_explicit_on(self):
+        for value in ("on", "ON", "1", "true", "yes", "enabled"):
+            self.assertTrue(notify.discord_threads_enabled(
+                {"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": value}))
+
+
+class TestDiscordWebhookId(unittest.TestCase):
+
+    def test_parses_numeric_id_from_normalised_url(self):
+        url = "https://discord.com/api/webhooks/123456789012/Ab9_secrettoken-XY"
+        self.assertEqual(notify.discord_webhook_id(url), "123456789012")
+
+    def test_returns_empty_for_non_webhook_url(self):
+        self.assertEqual(notify.discord_webhook_id("https://example.com/foo"), "")
+
+    def test_returns_empty_for_empty_input(self):
+        self.assertEqual(notify.discord_webhook_id(""), "")
+        self.assertEqual(notify.discord_webhook_id(None), "")
+
+    def test_returns_empty_when_id_is_not_numeric(self):
+        url = "https://discord.com/api/webhooks/notanid/token"
+        self.assertEqual(notify.discord_webhook_id(url), "")
+
+
+class TestRenderThreadName(unittest.TestCase):
+
+    def _ctx(self, **overrides):
+        ctx = {"session_id": "sess-abc12345",
+               "cwd": "/workspace/projects/demo",
+               "branch": "feature/x"}
+        ctx.update(overrides)
+        return ctx
+
+    def test_default_template_used_when_env_unset(self):
+        name = notify.render_thread_name(self._ctx(), environ={})
+        self.assertIn("demo", name)
+        self.assertIn("sess-abc", name)  # session_short prefix.
+
+    def test_custom_template_substitutes(self):
+        env = {"HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME":
+               "{branch} @ {project} ({session_short})"}
+        self.assertEqual(notify.render_thread_name(self._ctx(), environ=env),
+                          "feature/x @ demo (sess-abc)")
+
+    def test_unknown_placeholder_falls_back_to_default(self):
+        env = {"HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME":
+               "{not_a_real_var}"}
+        name = notify.render_thread_name(self._ctx(), environ=env)
+        # Falls back to DEFAULT_THREAD_NAME_TEMPLATE rather than producing ''.
+        self.assertIn("demo", name)
+        self.assertIn("sess-abc", name)
+
+    def test_truncated_to_discord_limit(self):
+        env = {"HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME": "X" * 500}
+        name = notify.render_thread_name(self._ctx(), environ=env)
+        self.assertLessEqual(len(name), notify.LIMIT_THREAD_NAME)
+
+    def test_empty_session_id_still_renders(self):
+        name = notify.render_thread_name(self._ctx(session_id=""), environ={})
+        self.assertTrue(name)
+        self.assertLessEqual(len(name), notify.LIMIT_THREAD_NAME)
+
+    def test_secrets_in_branch_are_redacted(self):
+        env = {"HOLYCLAUDE_NOTIFY_DISCORD_THREAD_NAME": "{branch}"}
+        secret = "sk-ant-api03-LEAKEDsecret0123456789"
+        name = notify.render_thread_name(
+            self._ctx(branch="x-" + secret + "-y"), environ=env)
+        self.assertNotIn("LEAKEDsecret", name)
+
+
+class TestThreadMapIO(unittest.TestCase):
+
+    def _tempdir(self):
+        d = tempfile.mkdtemp(prefix="notify-threads-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def test_missing_file_returns_empty(self):
+        d = self._tempdir()
+        self.assertEqual(notify._load_thread_map(os.path.join(d, "nope.json")), {})
+
+    def test_save_then_load_roundtrip(self):
+        d = self._tempdir()
+        path = os.path.join(d, "threads.json")
+        notify._save_thread_map(path, {"100": {"sess-a": "t-1"}})
+        self.assertEqual(notify._load_thread_map(path),
+                          {"100": {"sess-a": "t-1"}})
+
+    def test_atomic_rename_leaves_no_tmp(self):
+        d = self._tempdir()
+        path = os.path.join(d, "threads.json")
+        notify._save_thread_map(path, {"w": {"s": "t"}})
+        self.assertFalse(os.path.exists(path + ".tmp"))
+
+    def test_malformed_file_returns_empty(self):
+        d = self._tempdir()
+        path = os.path.join(d, "threads.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{not valid json")
+        self.assertEqual(notify._load_thread_map(path), {})
+
+    def test_non_dict_root_returns_empty(self):
+        d = self._tempdir()
+        path = os.path.join(d, "threads.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(["nope"], handle)
+        self.assertEqual(notify._load_thread_map(path), {})
+
+    def test_load_drops_malformed_inner_buckets(self):
+        d = self._tempdir()
+        path = os.path.join(d, "threads.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"100": "scalar", "200": {"s": "t"}}, handle)
+        self.assertEqual(notify._load_thread_map(path), {"200": {"s": "t"}})
+
+
+class TestGetSetThreadId(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="notify-threads-")
+        self.path = os.path.join(self.dir, "threads.json")
+        self.lock = os.path.join(self.dir, "threads.lock")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_get_missing_returns_empty(self):
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-a",
+                                 threads_path=self.path, lock_path=self.lock),
+            "")
+
+    def test_set_then_get(self):
+        notify.set_thread_id("100", "sess-a", "thread-1",
+                             threads_path=self.path, lock_path=self.lock)
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-a",
+                                 threads_path=self.path, lock_path=self.lock),
+            "thread-1")
+
+    def test_separate_webhooks_do_not_collide(self):
+        notify.set_thread_id("100", "sess-a", "T-A",
+                             threads_path=self.path, lock_path=self.lock)
+        notify.set_thread_id("200", "sess-a", "T-B",
+                             threads_path=self.path, lock_path=self.lock)
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-a",
+                                 threads_path=self.path, lock_path=self.lock),
+            "T-A")
+        self.assertEqual(
+            notify.get_thread_id("200", "sess-a",
+                                 threads_path=self.path, lock_path=self.lock),
+            "T-B")
+
+    def test_separate_sessions_on_same_webhook(self):
+        notify.set_thread_id("100", "sess-a", "T-1",
+                             threads_path=self.path, lock_path=self.lock)
+        notify.set_thread_id("100", "sess-b", "T-2",
+                             threads_path=self.path, lock_path=self.lock)
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-b",
+                                 threads_path=self.path, lock_path=self.lock),
+            "T-2")
+
+    def test_empty_inputs_are_ignored(self):
+        notify.set_thread_id("", "sess-a", "T",
+                             threads_path=self.path, lock_path=self.lock)
+        notify.set_thread_id("100", "", "T",
+                             threads_path=self.path, lock_path=self.lock)
+        notify.set_thread_id("100", "sess-a", "",
+                             threads_path=self.path, lock_path=self.lock)
+        self.assertEqual(notify._load_thread_map(self.path), {})
+
+    def test_overwrite_replaces_previous_id(self):
+        notify.set_thread_id("100", "sess-a", "T-old",
+                             threads_path=self.path, lock_path=self.lock)
+        notify.set_thread_id("100", "sess-a", "T-new",
+                             threads_path=self.path, lock_path=self.lock)
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-a",
+                                 threads_path=self.path, lock_path=self.lock),
+            "T-new")
+
+
+class TestSendToDiscordThreaded(unittest.TestCase):
+    """End-to-end test for send_to_discord_threaded with the HTTP layer patched."""
+
+    WEBHOOK = "https://discord.com/api/webhooks/100/tokenABC"
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="notify-threads-")
+        self.path = os.path.join(self.dir, "threads.json")
+        self.lock = os.path.join(self.dir, "threads.lock")
+        self.ctx = {"session_id": "sess-abc", "cwd": "/workspace/projects/demo"}
+        self.embed = {"title": "T", "description": "D",
+                      "author": {"name": "a"}, "footer": {"text": "f"},
+                      "fields": []}
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _call(self, environ):
+        return notify.send_to_discord_threaded(
+            self.WEBHOOK, self.embed, "plain", self.ctx,
+            environ=environ,
+            threads_path=self.path, lock_path=self.lock)
+
+    def test_threads_off_uses_flat_sender(self):
+        with mock.patch.object(notify, "send_to_discord",
+                                return_value=True) as flat, \
+             mock.patch.object(notify, "_post_discord_raw") as raw:
+            self.assertTrue(self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "off"}))
+            flat.assert_called_once()
+            raw.assert_not_called()
+
+    def test_missing_session_id_falls_back_to_flat(self):
+        self.ctx["session_id"] = ""
+        with mock.patch.object(notify, "send_to_discord",
+                                return_value=True) as flat:
+            self.assertTrue(self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "on"}))
+            flat.assert_called_once()
+
+    def test_first_send_creates_thread_and_caches_id(self):
+        # The create POST includes thread_name and wait=true; Discord returns
+        # the new message object whose channel_id is the new thread.
+        with mock.patch.object(notify, "_post_discord_raw",
+                                return_value=(True, {"channel_id": "T-new"})) as raw:
+            self.assertTrue(
+                self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "on"}))
+            self.assertEqual(raw.call_count, 1)
+            args, kwargs = raw.call_args
+            url, payload = args[0], args[1]
+            self.assertEqual(url, self.WEBHOOK)
+            self.assertIn("thread_name", payload)
+            self.assertEqual(kwargs.get("params"), {"wait": "true"})
+        # The new thread id is persisted under the numeric webhook id.
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-abc",
+                                 threads_path=self.path, lock_path=self.lock),
+            "T-new")
+
+    def test_second_send_uses_cached_thread_id(self):
+        notify.set_thread_id("100", "sess-abc", "T-cached",
+                             threads_path=self.path, lock_path=self.lock)
+        with mock.patch.object(notify, "_post_discord_raw",
+                                return_value=(True, None)) as raw:
+            self.assertTrue(
+                self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "on"}))
+            self.assertEqual(raw.call_count, 1)
+            args, kwargs = raw.call_args
+            self.assertEqual(kwargs.get("params"),
+                              {"thread_id": "T-cached"})
+            # Follow-up posts must NOT smuggle a thread_name (would error 400).
+            self.assertNotIn("thread_name", args[1])
+
+    def test_dead_cached_thread_recreates_and_overwrites(self):
+        notify.set_thread_id("100", "sess-abc", "T-dead",
+                             threads_path=self.path, lock_path=self.lock)
+        # A dead thread (deleted / archived past retention) makes Discord 404
+        # on both the embed attempt AND the plain-text fallback inside
+        # _send_into_thread; only then does the threaded sender give up on
+        # the cached id and open a fresh thread.
+        responses = [(False, None),  # embed into dead thread → 404.
+                     (False, None),  # plain-text fallback into dead thread → 404.
+                     (True, {"channel_id": "T-fresh"})]  # create succeeds.
+        with mock.patch.object(notify, "_post_discord_raw",
+                                side_effect=responses) as raw:
+            self.assertTrue(
+                self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "on"}))
+            self.assertEqual(raw.call_count, 3)
+            # First two calls target the dead thread; the third creates a new one.
+            for idx in (0, 1):
+                _, kwargs = raw.call_args_list[idx]
+                self.assertEqual(kwargs.get("params"), {"thread_id": "T-dead"})
+            create_args, create_kwargs = raw.call_args_list[2]
+            self.assertIn("thread_name", create_args[1])
+            self.assertEqual(create_kwargs.get("params"), {"wait": "true"})
+        self.assertEqual(
+            notify.get_thread_id("100", "sess-abc",
+                                 threads_path=self.path, lock_path=self.lock),
+            "T-fresh")
+
+    def test_create_failure_falls_back_to_flat_send(self):
+        with mock.patch.object(notify, "_post_discord_raw",
+                                return_value=(False, None)), \
+             mock.patch.object(notify, "send_to_discord",
+                                return_value=True) as flat:
+            self.assertTrue(
+                self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "on"}))
+            flat.assert_called_once()
+        # Nothing cached on failure — next run still tries to create.
+        self.assertEqual(notify._load_thread_map(self.path), {})
+
+    def test_simple_style_still_threads(self):
+        # When the embed is None (HOLYCLAUDE_NOTIFY_STYLE=simple), threading
+        # should still work via the content payload + thread_name.
+        self.embed = None
+        with mock.patch.object(notify, "_post_discord_raw",
+                                return_value=(True, {"channel_id": "T-x"})) as raw:
+            self.assertTrue(
+                self._call({"HOLYCLAUDE_NOTIFY_DISCORD_THREADS": "on"}))
+            args, _ = raw.call_args
+            self.assertIn("content", args[1])
+            self.assertIn("thread_name", args[1])
 
 
 if __name__ == "__main__":
