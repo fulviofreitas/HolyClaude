@@ -157,12 +157,13 @@ echo "==> Patch-warning scan (advisory)"
 # surfaces the same fact for human attention.
 patch_targets=(
   "${vendored_pkg_path}/server/index.js:upstream.send(data, { binary: isBinary })"
-  "${vendored_pkg_path}/server/routes/commands.js:newModel: args.length"
+  "${vendored_pkg_path}/dist/assets:scrollToLine(_vp)"
 )
 for entry in "${patch_targets[@]}"; do
   file="${entry%%:*}"
   marker="${entry#*:}"
-  if docker exec "${CONTAINER}" grep -q -- "${marker}" "${file}" 2>/dev/null; then
+  # grep -r so a directory path (e.g. dist/assets) handles content-hashed bundle filenames.
+  if docker exec "${CONTAINER}" grep -rq -- "${marker}" "${file}" 2>/dev/null; then
     echo "  ok    patch present in ${file}"
   else
     echo "  WARN  patch missing in ${file} (marker: ${marker})"
