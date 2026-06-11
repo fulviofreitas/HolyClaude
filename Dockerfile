@@ -226,57 +226,31 @@ COPY vendor/artifacts/cloudcli-ai-cloudcli-1.34.0.tgz /tmp/vendor/cloudcli-ai-cl
 RUN npm i -g /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz && rm -f /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz
 RUN touch /usr/local/lib/node_modules/@cloudcli-ai/cloudcli/.env
 
-# ---------- Patch: preserve WebSocket frame type in plugin proxy (Issue #11) ----------
-RUN CLOUDCLI_INDEX="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/server/index.js" && \
-    grep -q "upstream.on('message', (data) =>" "$CLOUDCLI_INDEX" && \
-    sed -i "s/upstream.on('message', (data) => {/upstream.on('message', (data, isBinary) => {/" "$CLOUDCLI_INDEX" && \
-    sed -i "s/if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data)/if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data, { binary: isBinary })/" "$CLOUDCLI_INDEX" && \
-    sed -i "s/clientWs.on('message', (data) => {/clientWs.on('message', (data, isBinary) => {/" "$CLOUDCLI_INDEX" && \
-    sed -i "s/if (upstream.readyState === WebSocket.OPEN) upstream.send(data)/if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary })/" "$CLOUDCLI_INDEX" && \
-    echo "[patch] WebSocket frame type fix applied (both directions)" || \
-    echo "[patch] WARNING: WebSocket pattern not found in vendored CloudCLI install, skipping patch"
+# Retired patch: WebSocket frame-type forwarding (issue #11).
+# CloudCLI 1.34.0 extracted the plugin WS proxy into
+# dist-server/server/modules/websocket/services/plugin-websocket-proxy.service.js
+# and the compiled output already forwards binary frames natively
+# (`upstream.on('message', (data, isBinary) => clientWs.send(data, { binary: isBinary }))`).
+# The original patch targeted server/index.js, which no longer carries the
+# WS handlers, so it was silently no-opping in 1.34.0 anyway.
 
 # patch: preserve Shell tab scroll position across periodic refresh (issue #35)
-RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/assets/index-DqMVUeZS.js" && \
-    grep -q 'const B=()=>{v.current?.focus()}' "$CLOUDCLI_BUNDLE" && \
-    perl -pi -e 's/const B=\(\)=>\{v\.current\?\.focus\(\)\}/const B=()=>{const _vp=v.current?.buffer?.active?.viewportY??0;v.current?.focus();v.current?.scrollToLine(_vp)}/g' "$CLOUDCLI_BUNDLE" && \
+# Resolve the content-hashed bundle at build time so this survives version
+# bumps as long as the minified xterm focus-callback shape holds.
+RUN CLOUDCLI_BUNDLE="$(ls /usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/assets/index-*.js | head -n1)" && \
+    test -n "$CLOUDCLI_BUNDLE" && \
+    grep -q 'const Y=()=>{k.current?.focus()}' "$CLOUDCLI_BUNDLE" && \
+    perl -pi -e 's/const Y=\(\)=>\{k\.current\?\.focus\(\)\}/const Y=()=>{const _vp=k.current?.buffer?.active?.viewportY??0;k.current?.focus();k.current?.scrollToLine(_vp)}/g' "$CLOUDCLI_BUNDLE" && \
     echo "[patch] Shell scroll position fix applied" || \
     echo "[patch] WARNING: Shell scroll pattern not found in vendored CloudCLI bundle, skipping patch"
 
-# patch v1.2.2-1: commands.js expose newModel in spawn args (issue #36)
-RUN CLOUDCLI_COMMANDS="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/server/routes/commands.js" && \
-    grep -q 'message: args.length > 0' "$CLOUDCLI_COMMANDS" && \
-    perl -pi -e 's/^(\s+)(message: args\.length > 0)/$1newModel: args.length > 0 ? args[0] : null,\n$1$2/' "$CLOUDCLI_COMMANDS" && \
-    echo "[patch] commands.js newModel field added" || \
-    echo "[patch] WARNING: commands.js newModel pattern not found, skipping patch"
-
-# patch v1.2.2-2: bundle expose setClaudeModel in claudeModel context spread (issue #36)
-RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/assets/index-DqMVUeZS.js" && \
-    grep -q 'claudeModel:W,codexModel:V' "$CLOUDCLI_BUNDLE" && \
-    perl -pi -e 's/\QclaudeModel:W,codexModel:V\E/claudeModel:W,setClaudeModel:L,codexModel:V/g' "$CLOUDCLI_BUNDLE" && \
-    echo "[patch] bundle setClaudeModel context spread applied" || \
-    echo "[patch] WARNING: bundle claudeModel:W pattern not found, skipping patch"
-
-# patch v1.2.2-3: bundle wire setClaudeModel:lS2 into cursorModel destructure (issue #36)
-RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/assets/index-DqMVUeZS.js" && \
-    grep -q 'cursorModel:o,claudeModel:l,codexModel:c' "$CLOUDCLI_BUNDLE" && \
-    perl -pi -e 's/\QcursorModel:o,claudeModel:l,codexModel:c\E/cursorModel:o,claudeModel:l,setClaudeModel:lS2,codexModel:c/g' "$CLOUDCLI_BUNDLE" && \
-    echo "[patch] bundle setClaudeModel:lS2 destructure applied" || \
-    echo "[patch] WARNING: bundle cursorModel destructure pattern not found, skipping patch"
-
-# patch v1.2.2-4: bundle apply newModel on SSE model event (issue #36)
-RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/assets/index-DqMVUeZS.js" && \
-    grep -q 'case"model":k({type:"assistant"' "$CLOUDCLI_BUNDLE" && \
-    perl -pi -e 's/\Qcase"model":k({type:"assistant"\E/case"model":me.newModel\&\&lS2\&\&(lS2(me.newModel),localStorage.setItem("claude-model",me.newModel));k({type:"assistant"/g' "$CLOUDCLI_BUNDLE" && \
-    echo "[patch] bundle SSE model event handler applied" || \
-    echo "[patch] WARNING: bundle case\"model\" pattern not found, skipping patch"
-
-# patch v1.2.2-5: bundle add custom model option to select (issue #36)
-RUN CLOUDCLI_BUNDLE="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/dist/assets/index-DqMVUeZS.js" && \
-    grep -q 'children:N.OPTIONS.map(({value:C,label:j})=>s.jsx("option",{value:C,children:j},C+j))}' "$CLOUDCLI_BUNDLE" && \
-    perl -pi -e 's/\Qchildren:N.OPTIONS.map(({value:C,label:j})=>s.jsx("option",{value:C,children:j},C+j))}\E/children:[...N.OPTIONS.map(({value:C,label:j})=>s.jsx("option",{value:C,children:j},C+j)),!N.OPTIONS.some(C=>C.value===k)\&\&k\&\&s.jsx("option",{value:k,children:k},k+"custom")].filter(Boolean)}/g' "$CLOUDCLI_BUNDLE" && \
-    echo "[patch] bundle custom model select option applied" || \
-    echo "[patch] WARNING: bundle custom model select pattern not found, skipping patch"
+# Retired patches (issue #36, model switching):
+#   * server/routes/commands.js — expose newModel field in spawn args
+#   * bundle — setClaudeModel in context spread + destructure, SSE
+#     case"model" handler, custom-model dropdown option
+# CloudCLI 1.34.0 wires setClaudeModel/setCursorModel/setCodexModel through
+# the model-state context natively, and the old SSE case"model" / OPTIONS.map
+# anchors no longer exist. Re-introduce only if the native flow regresses.
 
 # ---------- CloudCLI plugins (staged outside the home) ----------
 # cloudcli hard-codes its plugin dir to ~/.claude-code-ui/plugins. In the
