@@ -226,15 +226,13 @@ COPY vendor/artifacts/cloudcli-ai-cloudcli-1.34.0.tgz /tmp/vendor/cloudcli-ai-cl
 RUN npm i -g /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz && rm -f /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz
 RUN touch /usr/local/lib/node_modules/@cloudcli-ai/cloudcli/.env
 
-# ---------- Patch: preserve WebSocket frame type in plugin proxy (Issue #11) ----------
-RUN CLOUDCLI_INDEX="/usr/local/lib/node_modules/@cloudcli-ai/cloudcli/server/index.js" && \
-    grep -q "upstream.on('message', (data) =>" "$CLOUDCLI_INDEX" && \
-    sed -i "s/upstream.on('message', (data) => {/upstream.on('message', (data, isBinary) => {/" "$CLOUDCLI_INDEX" && \
-    sed -i "s/if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data)/if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data, { binary: isBinary })/" "$CLOUDCLI_INDEX" && \
-    sed -i "s/clientWs.on('message', (data) => {/clientWs.on('message', (data, isBinary) => {/" "$CLOUDCLI_INDEX" && \
-    sed -i "s/if (upstream.readyState === WebSocket.OPEN) upstream.send(data)/if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary })/" "$CLOUDCLI_INDEX" && \
-    echo "[patch] WebSocket frame type fix applied (both directions)" || \
-    echo "[patch] WARNING: WebSocket pattern not found in vendored CloudCLI install, skipping patch"
+# Retired patch: WebSocket frame-type forwarding (issue #11).
+# CloudCLI 1.34.0 extracted the plugin WS proxy into
+# dist-server/server/modules/websocket/services/plugin-websocket-proxy.service.js
+# and the compiled output already forwards binary frames natively
+# (`upstream.on('message', (data, isBinary) => clientWs.send(data, { binary: isBinary }))`).
+# The original patch targeted server/index.js, which no longer carries the
+# WS handlers, so it was silently no-opping in 1.34.0 anyway.
 
 # patch: preserve Shell tab scroll position across periodic refresh (issue #35)
 # Resolve the content-hashed bundle at build time so this survives version

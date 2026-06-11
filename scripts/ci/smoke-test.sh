@@ -156,7 +156,6 @@ echo "==> Patch-warning scan (advisory)"
 # patches WARN here rather than FAIL, and the cloudcli-sync PR description
 # surfaces the same fact for human attention.
 patch_targets=(
-  "${vendored_pkg_path}/server/index.js:upstream.send(data, { binary: isBinary })"
   "${vendored_pkg_path}/dist/assets:scrollToLine(_vp)"
 )
 for entry in "${patch_targets[@]}"; do
