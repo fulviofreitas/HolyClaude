@@ -116,6 +116,29 @@ jobs:
           fi
           mv "$tarball" "${GITHUB_WORKSPACE}/vendor/artifacts/${tarball}"
 
+      - name: Patch-anchor drift report
+        if: steps.cmp.outputs.changed == 'true'
+        id: anchors
+        env:
+          CUR: ${{ steps.current.outputs.version }}
+          TGT: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          old="vendor/artifacts/${VENDOR_PREFIX}-${CUR}.tgz"
+          new="vendor/artifacts/${VENDOR_PREFIX}-${TGT}.tgz"
+          # Diff the inline-patch anchors and upstream-merged-fix canaries
+          # between the old vendored tarball and the new one. The output
+          # tells a reviewer at a glance whether minified symbols rotated
+          # (patches need refreshing) or upstream regressed a native fix
+          # (retired patches need resurrecting). Runs BEFORE the old tarball
+          # is deleted in the next step.
+          report=$(scripts/ci/cloudcli-anchor-report.sh "$old" "$new" || echo "(anchor report failed)")
+          {
+            echo 'report<<ANCHOR_EOF'
+            echo "$report"
+            echo 'ANCHOR_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Drop old tarball + rewrite Dockerfile
         if: steps.cmp.outputs.changed == 'true'
         env:
@@ -208,6 +231,10 @@ jobs:
             ### Upstream release notes
 
             ${{ steps.notes.outputs.body }}
+
+            ---
+
+            ${{ steps.anchors.outputs.report }}
 
             ---
 
