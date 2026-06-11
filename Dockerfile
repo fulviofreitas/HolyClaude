@@ -220,10 +220,10 @@ RUN if [ "$VARIANT" = "full" ]; then \
 # release; @cloudcli-ai/cloudcli is the upstream-renamed continuation. Same
 # bin and module shape; install path under /usr/local/lib/node_modules
 # changes from @siteboon/claude-code-ui to @cloudcli-ai/cloudcli.
-COPY vendor/artifacts/cloudcli-ai-cloudcli-1.33.0.tgz /tmp/vendor/cloudcli-ai-cloudcli-1.33.0.tgz
+COPY vendor/artifacts/cloudcli-ai-cloudcli-1.34.0.tgz /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz
 
 # ---------- CloudCLI (web UI for Claude Code) ----------
-RUN npm i -g /tmp/vendor/cloudcli-ai-cloudcli-1.33.0.tgz && rm -f /tmp/vendor/cloudcli-ai-cloudcli-1.33.0.tgz
+RUN npm i -g /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz && rm -f /tmp/vendor/cloudcli-ai-cloudcli-1.34.0.tgz
 RUN touch /usr/local/lib/node_modules/@cloudcli-ai/cloudcli/.env
 
 # ---------- Patch: preserve WebSocket frame type in plugin proxy (Issue #11) ----------
